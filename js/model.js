@@ -13,9 +13,11 @@ import { pipeline, env } from "https://cdn.jsdelivr.net/npm/@huggingface/transfo
 import { UMAP } from "https://cdn.jsdelivr.net/npm/umap-js@1.4.0/+esm";
 import { cosineSimilarityRaw } from "./primitives.js";
 
+// Serve models locally from the Python/local HTTP server (/models/)
+// This enables instantaneous loading from disk with 0 internet consumption.
 env.useBrowserCache = true;
-env.allowLocalModels = false;
-env.allowRemoteModels = true;
+env.allowLocalModels = true;
+env.allowRemoteModels = false;
 env.localModelPath = "/models/";
 
 if (env.backends && env.backends.onnx) {
