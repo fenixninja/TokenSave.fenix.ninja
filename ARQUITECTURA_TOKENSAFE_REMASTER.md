@@ -365,3 +365,77 @@ tokensafe_remaster/
 1. **Determinismo y Fidelidad:** Toda la lógica de normalización, proyección y escalado es matemática determinista. A idénticos vectores de entrada, la respuesta y las probabilidades son exactamente idénticas en cualquier navegador o servidor.
 2. **Eficiencia en Recursos:** Permite clasificar y tomar decisiones en $\approx 800 - 1400\text{ ms}$ en CPUs modestas sin GPU, reduciendo el consumo de RAM a menos de $500\text{ MB}$.
 3. **Escalabilidad Zero-Shot:** No requiere fine-tuning ni reentrenamiento del modelo de lenguaje; la ganancia de más de $22$ puntos porcentuales proviene exclusivamente de la corrección geométrica del espacio latente y la calibración estadística de la decisión.
+
+---
+
+## 10. Arquitectura de Ejecución en Navegador: WASM Multihilo, Estabilidad y Telemetría
+
+Para permitir una ejecución 100% local, privada y sin servidores externos en máquinas de cliente (como laptops o PCs de oficina con CPU Intel Core i5 de 4 núcleos y sin aceleración por GPU dedicada), el sistema incorpora una arquitectura de inferencia WebAssembly de alta resiliencia.
+
+```mermaid
+flowchart TD
+    subgraph Browser ["Navegador Web (Brave / Chrome)"]
+        UI["UI / DOM / Event Loop (60 FPS)"]
+        Queue["Async Mutex Queue (inferenceQueue)"]
+        Chunker["Chunker (lotes de max 4 textos)"]
+        Yield["Yield (await setTimeout 0)"]
+        WASM["Runtime ONNX WebAssembly (4 hilos SharedArrayBuffer)"]
+        LRU["Caché LRU Local (SessionStorage)"]
+    end
+
+    subgraph Host ["Servidor Local (server.py)"]
+        Headers["Cabeceras de Aislamiento:<br>COOP: same-origin<br>COEP: credentialless"]
+        LocalModel["/models/ (Qwen3-Embedding-0.6B-ONNX q4f16)"]
+    end
+
+    UI -->|"Petición de Inferencia"| Queue
+    Queue --> Chunker
+    Chunker --> Yield
+    Yield -->|"UI se mantiene fluida"| UI
+    Yield --> WASM
+    WASM <--> LRU
+    Headers -.->|"Habilita hilos"| WASM
+    LocalModel -.->|"Carga offline (~540 MB)"| WASM
+```
+
+### 10.1 Servidor Local con Aislamiento Cross-Origin (`server.py`)
+Los navegadores modernos restringen el uso de `SharedArrayBuffer` por motivos de seguridad (vulnerabilidades tipo Spectre). Para desbloquear los 4 hilos en WebAssembly, `server.py` inyecta las cabeceras estándar:
+- `Cross-Origin-Opener-Policy: same-origin` (COOP)
+- `Cross-Origin-Embedder-Policy: credentialless` (COEP): Se utiliza `credentialless` en lugar de `require-corp` para permitir que fuentes tipográficas externas (Google Fonts) y librerías CDN (Math.js, Plotly) carguen sin bloqueos CORS.
+- `Cross-Origin-Resource-Policy: cross-origin` (CORP)
+- `Access-Control-Allow-Origin: *`
+
+Adicionalmente, intercepta peticiones no esenciales como `/favicon.ico` y `/.well-known/appspecific/...` respondiendo con `204 No Content` para evitar excepciones de `FileNotFoundError` y 404 en consola.
+
+### 10.2 Sondeo Preventivo de Adaptador WebGPU
+En navegadores basados en Chromium (como Brave) con la aceleración gráfica desactivada en ajustes, la propiedad `navigator.gpu` existe pero `navigator.gpu.requestAdapter()` devuelve `null`.
+Si Transformers.js intenta inicializar WebGPU directamente, la promesa rechazada queda almacenada internamente en la caché del módulo (`wasmInitPromise`), lo que corrompe de forma permanente los intentos subsiguientes de inicializar el backend CPU WebAssembly.
+- **Solución:** [`js/model.js`](file:///home/fenix/Documents/tokensafe_remaster/js/model.js) evalúa primero `await navigator.gpu.requestAdapter()`. Si retorna `null`, omite WebGPU inmediatamente y arranca de forma limpia el backend WASM con 4 hilos.
+
+### 10.3 Prevención de Bloqueos (Freezes) y Control de Concurrencia WASM
+Durante la inferencia en escenarios complejos (como `support_fanout` con 6 preguntas simultáneas y transcripciones de más de 3.500 caracteres), la ejecución sin control congelaba la pestaña del navegador debido a tres factores:
+1. **Colisión de Concurrencia en WebAssembly:** Múltiples preguntas evaluadas en paralelo con `Promise.all()` disparaban varias llamadas simultáneas a `session.run()` sobre la misma instancia WASM, saturando los 4 hilos de CPU en contención de mutex.
+   - *Solución:* Se implementó una **Cola Asíncrona Mutex (`inferenceQueue`)** en [`js/model.js`](file:///home/fenix/Documents/tokensafe_remaster/js/model.js), garantizando que las inferencias se ejecuten de manera estrictamente secuencial y segura.
+2. **Explosión Cuadrática de Atención ($O(N^2)$):** El detector de conectores adversativos (*"but", "however"*) detectaba conjunciones casuales en textos largos de soporte, triplicando los prompts (full, head, tail) para cada pregunta. 6 preguntas generaban 18 secuencias de 1.000 tokens en un solo tensor.
+   - *Solución:* Se restringió la división adversativa en [`js/decision-engine.js`](file:///home/fenix/Documents/tokensafe_remaster/js/decision-engine.js) exclusivamente a textos cortos (`< 600` caracteres, como reseñas de sentimiento). Para transcripciones largas, se evalúa una sola secuencia por pregunta.
+3. **Sub-batching por Chunks y Yielding al Event Loop:** En lugar de pasar decenas de textos a la vez a `model()`, se procesan en lotes de máximo 4 textos (`CHUNK_SIZE = 4`), intercalando un `await new Promise(r => setTimeout(r, 0))` entre bloques. Esto libera el hilo principal de JavaScript, permitiendo que el navegador actualice la interfaz, anime los indicadores de progreso y responda al usuario en todo momento.
+
+### 10.4 Observabilidad y Telemetría WebAssembly en Tiempo Real
+La consola de desarrollo (`F12`) proporciona visibilidad granular sobre cada pase de inferencia:
+```text
+▼ [WASM Assembly] Lote de 6 embeddings (0 cache, 6 inferencia CPU)
+    Configuracion WASM: 4 hilos CPU | Cross-Origin: Aislado (SharedArrayBuffer activo) | Backend: ONNX Runtime WASM (SIMD)
+    [Entrada 1/6] "Instruct: The customer's issue was fully resolved within the session. Query: Agent Goal: ..." (1842 chars)
+    [Entrada 2/6] "Instruct: Everything the agent told the customer is consistent... Query: Agent Goal: ..." (1842 chars)
+    [WASM Chunk 1/2] ✔ 4 textos en 1620 ms (405.0 ms/texto) -> Float32Array[1024]
+    [WASM Chunk 2/2] ✔ 2 textos en 810 ms (405.0 ms/texto) -> Float32Array[1024]
+    [WASM Assembly] Resumen final: 6 textos inferidos en 2430 ms (405.0 ms/texto)
+▼ [Decision Engine v4.1] Resultados Evaluados
+    ✓ [Noul] issue_resolved -> TRUE (Prob: 88.4% vs Umbral 50.0%)
+    ✓ [Noul] escalation_needed -> FALSE (Prob: 12.1% vs Umbral 50.0%)
+    ✓ [Choice] customer_sentiment -> Ganador: "positive" (91.2%) | Confianza: 84.5%
+```
+
+### 10.5 Unificación de Memoria SPA (Playground y Benchmarks)
+Anteriormente, navegar entre `index.html` y `bench.html` requería recargar la página, forzando al navegador a descargar y compilar nuevamente el grafo ONNX de 540 MB en memoria RAM (duplicando el consumo a más de 1.1 GB y requiriendo otros 14 segundos de compilación CPU).
+- Se unificó la arquitectura en una **Single Page Application (SPA)** mediante pestañas en la barra superior (`Playground` y `⚡ Benchmarks`). Ambas vistas comparten exactamente la misma instancia del modelo en memoria, reduciendo la latencia de cambio a 0 ms y estabilizando el uso de RAM.
