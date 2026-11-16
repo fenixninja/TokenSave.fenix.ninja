@@ -30,8 +30,9 @@ const SMS_ABBREVIATIONS = [
 
 /**
  * #32: Cleans HTML entities, escaped slashes, and Treebank brackets (-lrb-, -rrb-).
+ * Allows preserving newlines when splitting structured text (like resumes or logs) into bullets.
  */
-export function cleanRawText(raw) {
+export function cleanRawText(raw, preserveNewlines = false) {
     if (!raw) return "";
     let s = String(raw);
     s = s
@@ -45,10 +46,12 @@ export function cleanRawText(raw) {
         .replace(/-lrb-/gi, "(")
         .replace(/-rrb-/gi, ")")
         .replace(/\\\//g, "/")
-        .replace(/``|''/g, '"')
-        .replace(/\s+/g, " ")
-        .trim();
-    return s;
+        .replace(/``|''/g, '"');
+
+    if (preserveNewlines) {
+        return s.replace(/[^\S\r\n]+/g, " ").replace(/\n{3,}/g, "\n\n").trim();
+    }
+    return s.replace(/\s+/g, " ").trim();
 }
 
 /**
@@ -179,14 +182,16 @@ export function splitAdversativeClauses(text) {
 
 /**
  * #29: Splits a long passage into individual sentences for extractive max-pooling (BoolQ, resumes, logs).
+ * Uses newline and bullet boundary preservation so resume bullets and log items are isolated cleanly.
  */
 export function splitIntoSentences(passage) {
-    const cleaned = cleanRawText(passage);
+    if (!passage) return [];
+    const cleaned = cleanRawText(passage, true);
     const rawParts = cleaned
-        .split(/(?<=[.!?\n])\s+(?=[A-Z0-9"`(-])/)
+        .split(/(?<=[.!?\n])\s*(?=[A-Z0-9"`(-])/)
         .map(s => s.trim())
-        .filter(s => s.length >= 10);
-    return rawParts.length > 0 ? rawParts : [cleaned];
+        .filter(s => s.length >= 8);
+    return rawParts.length > 0 ? rawParts : [cleaned.replace(/\s+/g, " ")];
 }
 
 /**
@@ -405,6 +410,9 @@ export function tokenTrimState(fullStateText, taskInstruction, maxChars = 1000) 
         if (matches.length > 0) {
             return matches.slice(0, 4).join(" ");
         }
+        // Fallback: If no AI lines exist in the candidate text, return the primary summary so the model detects absence of LLM work
+        const summary = sentences.filter(s => /summary|engineer|developer/i.test(s));
+        return (summary.length > 0 ? summary.slice(0, 2) : sentences.slice(0, 2)).join(" ");
     }
 
     // 3. Open Source / Certifications / Awards targeting
@@ -417,7 +425,7 @@ export function tokenTrimState(fullStateText, taskInstruction, maxChars = 1000) 
     }
 
     // 4. Years of experience / Seniority timeline targeting
-    if (/\b(years\s+of\s+experience|how\s+many\s+years|timeline|seniority)\b/i.test(inst)) {
+    if (/\b(years\s+of\s+experience|how\s+many\s+years|timeline|seniority|professional\s+experience)\b/i.test(inst)) {
         const sentences = splitIntoSentences(text);
         const matches = sentences.filter(s => /\b(20\d\d|jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec|present|years?)\b/i.test(s));
         if (matches.length > 0) {

@@ -44,14 +44,14 @@ function ensureCacheLoaded() {
     if (sessionLoaded) return;
     sessionLoaded = true;
     try {
-        if (typeof sessionStorage !== "undefined") {
-            const raw = sessionStorage.getItem(CACHE_KEY);
-            if (raw) {
-                const parsed = JSON.parse(raw);
-                for (const [k, v] of Object.entries(parsed)) {
-                    lruCache.set(k, new Float32Array(v));
-                }
+        const raw = (typeof localStorage !== "undefined" && localStorage.getItem(CACHE_KEY)) ||
+                    (typeof sessionStorage !== "undefined" && sessionStorage.getItem(CACHE_KEY));
+        if (raw) {
+            const parsed = JSON.parse(raw);
+            for (const [k, v] of Object.entries(parsed)) {
+                lruCache.set(k, new Float32Array(v));
             }
+            console.log(`%c[Fenix Vector] ✔ ${lruCache.size} embeddings recuperados de memoria permanente.`, "color: #10b981; font-weight: bold;");
         }
     } catch (_) {}
 }
@@ -72,12 +72,13 @@ export function getEmbeddingCache() {
 
 export function saveEmbeddingCache() {
     try {
-        if (typeof sessionStorage !== "undefined" && lruCache.size <= 300) {
+        const storage = (typeof localStorage !== "undefined") ? localStorage : (typeof sessionStorage !== "undefined" ? sessionStorage : null);
+        if (storage && lruCache.size <= 500) {
             const serializable = {};
             for (const [k, v] of lruCache.entries()) {
                 serializable[k] = Array.from(v);
             }
-            sessionStorage.setItem(CACHE_KEY, JSON.stringify(serializable));
+            storage.setItem(CACHE_KEY, JSON.stringify(serializable));
         }
     } catch (_) {}
 }

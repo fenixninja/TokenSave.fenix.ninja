@@ -48,7 +48,54 @@ import {
 } from "./text-preprocessor.js";
 
 // #40: Schema-level cache for compiled criterion vectors, centroids, and null-input biases
+const SCHEMA_STORAGE_KEY = "fenix_compiled_question_geometries_v1";
 const compiledQuestionCache = new Map();
+let schemaCacheLoaded = false;
+
+function ensureSchemaCacheLoaded() {
+    if (schemaCacheLoaded) return;
+    schemaCacheLoaded = true;
+    try {
+        if (typeof localStorage !== "undefined") {
+            const raw = localStorage.getItem(SCHEMA_STORAGE_KEY);
+            if (raw) {
+                const parsed = JSON.parse(raw);
+                for (const [k, v] of Object.entries(parsed)) {
+                    if (v.centeredOptVecs) v.centeredOptVecs = v.centeredOptVecs.map(a => new Float32Array(a));
+                    if (v.rawOptVecs) v.rawOptVecs = v.rawOptVecs.map(a => new Float32Array(a));
+                    if (v.rawLevelVecs) v.rawLevelVecs = v.rawLevelVecs.map(a => new Float32Array(a));
+                    if (v.centeredLevelVecs) v.centeredLevelVecs = v.centeredLevelVecs.map(a => new Float32Array(a));
+                    if (v.nullVec) v.nullVec = new Float32Array(v.nullVec);
+                    if (v.orthoTrue) v.orthoTrue = new Float32Array(v.orthoTrue);
+                    if (v.orthoFalse) v.orthoFalse = new Float32Array(v.orthoFalse);
+                    compiledQuestionCache.set(k, v);
+                }
+                console.log(`%c[Decision Engine] ✔ ${compiledQuestionCache.size} geometrias de preguntas recuperadas de almacenamiento local permanente (0 ms).`, "color: #10b981; font-weight: bold;");
+            }
+        }
+    } catch (_) {}
+}
+
+function persistSchemaCache() {
+    try {
+        if (typeof localStorage !== "undefined" && compiledQuestionCache.size <= 300) {
+            const serializable = {};
+            for (const [k, v] of compiledQuestionCache.entries()) {
+                serializable[k] = {
+                    ...v,
+                    centeredOptVecs: v.centeredOptVecs ? v.centeredOptVecs.map(a => Array.from(a)) : undefined,
+                    rawOptVecs: v.rawOptVecs ? v.rawOptVecs.map(a => Array.from(a)) : undefined,
+                    rawLevelVecs: v.rawLevelVecs ? v.rawLevelVecs.map(a => Array.from(a)) : undefined,
+                    centeredLevelVecs: v.centeredLevelVecs ? v.centeredLevelVecs.map(a => Array.from(a)) : undefined,
+                    nullVec: v.nullVec ? Array.from(v.nullVec) : undefined,
+                    orthoTrue: v.orthoTrue ? Array.from(v.orthoTrue) : undefined,
+                    orthoFalse: v.orthoFalse ? Array.from(v.orthoFalse) : undefined
+                };
+            }
+            localStorage.setItem(SCHEMA_STORAGE_KEY, JSON.stringify(serializable));
+        }
+    } catch (_) {}
+}
 
 /**
  * Blends two vectors with weights (wA, wB) and L2-normalizes the result.
@@ -66,6 +113,7 @@ function blendVectors(vecA, vecB, wA = 0.65, wB = 0.35) {
  * Compiles and caches the embedding geometry for a question definition (#40).
  */
 async function compileQuestionGeometry(qKey, qDef, rawEmbedFn) {
+    ensureSchemaCacheLoaded();
     const cacheKey = JSON.stringify({ qKey, type: qDef.type, instructions: qDef.instructions, criteria: qDef.criteria });
     if (compiledQuestionCache.has(cacheKey)) {
         return compiledQuestionCache.get(cacheKey);
@@ -104,6 +152,7 @@ async function compileQuestionGeometry(qKey, qDef, rawEmbedFn) {
             nullSims
         };
         compiledQuestionCache.set(cacheKey, compiled);
+        persistSchemaCache();
         return compiled;
     }
 
@@ -133,6 +182,7 @@ async function compileQuestionGeometry(qKey, qDef, rawEmbedFn) {
             nullSims
         };
         compiledQuestionCache.set(cacheKey, compiled);
+        persistSchemaCache();
         return compiled;
     }
 
@@ -169,6 +219,7 @@ async function compileQuestionGeometry(qKey, qDef, rawEmbedFn) {
         nullNeg
     };
     compiledQuestionCache.set(cacheKey, compiled);
+    persistSchemaCache();
     return compiled;
 }
 
