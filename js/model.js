@@ -1,50 +1,72 @@
 /**
  * model.js - Fenix Vector (Embeddings) & Dimension Reduction Integration
  *
- * Provides:
- * - Transformers.js pipeline initialization with browser cache & WebGPU fallback
- * - Memory & sessionStorage embedding cache
- * - Vectorized cosine similarity calculation
+ * Implements Block D (#39-#44):
+ * - Transformers.js pipeline initialization with browser cache & WebGPU/WASM fallback
+ * - Bounded LRU memory cache (max 5,000 entries) & sessionStorage persistence (#44)
+ * - Direct Float32Array extraction from ONNX tensor data (#41)
+ * - Full-precision 8x-unrolled cosine similarity (#42, #43)
  * - UMAP 2D projection
  */
 
-import { pipeline} from "https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.5.2";
+import { pipeline, env } from "https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.5.2";
 import { UMAP } from "https://cdn.jsdelivr.net/npm/umap-js@1.4.0/+esm";
+import { cosineSimilarityRaw } from "./primitives.js";
 
-// Enable browser cache for models
 env.useBrowserCache = true;
-
-// Configurar carga 100% local desde el servidor web local (garantiza cero llamadas o cuotas a Hugging Face)
 env.allowLocalModels = false;
 env.allowRemoteModels = true;
 env.localModelPath = "/models/";
 
-// Suppress benign ONNX runtime warnings
 if (env.backends && env.backends.onnx) {
     env.backends.onnx.logLevel = "error";
 }
 
-const CACHE_KEY = "fenix_session_cached_embeddings";
-let memoryCache = null;
+const CACHE_KEY = "fenix_session_cached_embeddings_v2";
+const MAX_CACHE_ENTRIES = 5000;
+const lruCache = new Map();
+let sessionLoaded = false;
 
-export function getEmbeddingCache() {
-    if (memoryCache) return memoryCache;
+function ensureCacheLoaded() {
+    if (sessionLoaded) return;
+    sessionLoaded = true;
     try {
-        const raw = sessionStorage.getItem(CACHE_KEY);
-        memoryCache = raw ? JSON.parse(raw) : {};
-    } catch (_) {
-        memoryCache = {};
-    }
-    return memoryCache;
+        if (typeof sessionStorage !== "undefined") {
+            const raw = sessionStorage.getItem(CACHE_KEY);
+            if (raw) {
+                const parsed = JSON.parse(raw);
+                for (const [k, v] of Object.entries(parsed)) {
+                    lruCache.set(k, new Float32Array(v));
+                }
+            }
+        }
+    } catch (_) {}
 }
 
-export function saveEmbeddingCache(cache) {
-    memoryCache = cache;
-    try {
-        sessionStorage.setItem(CACHE_KEY, JSON.stringify(cache));
-    } catch (_) {
-        // Handle potential quota errors gracefully
+function setLruEntry(key, vec) {
+    if (lruCache.has(key)) lruCache.delete(key);
+    lruCache.set(key, vec);
+    if (lruCache.size > MAX_CACHE_ENTRIES) {
+        const oldestKey = lruCache.keys().next().value;
+        lruCache.delete(oldestKey);
     }
+}
+
+export function getEmbeddingCache() {
+    ensureCacheLoaded();
+    return Object.fromEntries(lruCache.entries());
+}
+
+export function saveEmbeddingCache() {
+    try {
+        if (typeof sessionStorage !== "undefined" && lruCache.size <= 300) {
+            const serializable = {};
+            for (const [k, v] of lruCache.entries()) {
+                serializable[k] = Array.from(v);
+            }
+            sessionStorage.setItem(CACHE_KEY, JSON.stringify(serializable));
+        }
+    } catch (_) {}
 }
 
 let embedPipeline = null;
@@ -52,9 +74,6 @@ let modelLoadingPromise = null;
 
 /**
  * Initializes or retrieves the singleton Transformers.js embedding pipeline.
- *
- * @param {function} [onProgress] - Progress callback (info: { status, progress, file })
- * @returns {Promise<any>}
  */
 export async function getEmbeddingModel(onProgress) {
     if (embedPipeline) return embedPipeline;
@@ -69,19 +88,16 @@ export async function getEmbeddingModel(onProgress) {
                     device: "webgpu",
                     dtype: "q4f16",
                     session_options: {
-                        logSeverityLevel: 3,
+                        logSeverityLevel: 3
                     },
                     progress_callback: (info) => {
-                        if (typeof onProgress === "function") {
-                            onProgress(info);
-                        }
+                        if (typeof onProgress === "function") onProgress(info);
                     }
                 }
             );
             return embedPipeline;
         } catch (err) {
             console.warn("WebGPU initialization failed, falling back to WASM/CPU:", err);
-            // Fallback to CPU/WASM
             embedPipeline = await pipeline(
                 "feature-extraction",
                 "onnx-community/Qwen3-Embedding-0.6B-ONNX",
@@ -89,12 +105,10 @@ export async function getEmbeddingModel(onProgress) {
                     device: "wasm",
                     dtype: "q4f16",
                     session_options: {
-                        logSeverityLevel: 3,
+                        logSeverityLevel: 3
                     },
                     progress_callback: (info) => {
-                        if (typeof onProgress === "function") {
-                            onProgress(info);
-                        }
+                        if (typeof onProgress === "function") onProgress(info);
                     }
                 }
             );
@@ -106,66 +120,70 @@ export async function getEmbeddingModel(onProgress) {
 }
 
 /**
- * Computes embeddings for an array of texts, utilizing local cache.
- *
- * @param {string[]} texts - Raw string inputs
- * @param {string} [prefix='Query:'] - Optional prefix or instruction
- * @param {function} [onStatus] - Status update callback
- * @returns {Promise<number[][]>} Array of normalized embedding vectors
+ * #41: Extracts Float32Array slices directly from ONNX Tensor output without slow .tolist() overhead.
  */
-export async function computeEmbeddings(texts, prefix = "Query:", onStatus) {
-    const cache = getEmbeddingCache();
-    const model = await getEmbeddingModel(onStatus);
-
-    const formattedTexts = texts.map(t => `${prefix} ${t.trim()}`);
-    const missingIndices = [];
-    const missingFormatted = [];
-
-    formattedTexts.forEach((formatted, idx) => {
-        if (!cache[formatted]) {
-            missingIndices.push(idx);
-            missingFormatted.push(formatted);
+function extractVectorsFromTensor(output, batchSize) {
+    if (output && output.data && output.dims && output.dims.length >= 2) {
+        const dim = output.dims[output.dims.length - 1];
+        const vectors = [];
+        for (let i = 0; i < batchSize; i++) {
+            const start = i * dim;
+            vectors.push(new Float32Array(output.data.slice(start, start + dim)));
         }
-    });
-
-    if (missingFormatted.length > 0) {
-        if (typeof onStatus === "function") {
-            onStatus({ status: "working", message: `Generando embeddings (${missingFormatted.length} nuevos)...` });
-        }
-        const output = await model(missingFormatted, { pooling: "mean", normalize: true });
-        const vectors = output.tolist();
-        missingIndices.forEach((origIdx, i) => {
-            const key = formattedTexts[origIdx];
-            cache[key] = vectors[i];
-        });
-        saveEmbeddingCache(cache);
+        return vectors;
     }
-
-    return formattedTexts.map(key => cache[key]);
+    return output.tolist().map(v => new Float32Array(v));
 }
 
 /**
- * Calculates cosine similarity between two normalized vectors (dot product).
- *
- * @param {number[]} vecA
- * @param {number[]} vecB
- * @returns {number}
+ * #39 & #41: Computes raw embeddings for an array of pre-formatted strings in a single batch.
+ */
+export async function computeRawEmbeddings(texts, onStatus) {
+    ensureCacheLoaded();
+    const model = await getEmbeddingModel(onStatus);
+
+    const missingIndices = [];
+    const missingTexts = [];
+
+    texts.forEach((t, idx) => {
+        if (!lruCache.has(t)) {
+            missingIndices.push(idx);
+            missingTexts.push(t);
+        }
+    });
+
+    if (missingTexts.length > 0) {
+        if (typeof onStatus === "function") {
+            onStatus({ status: "working", message: `Generando embeddings (${missingTexts.length} nuevos)...` });
+        }
+        const output = await model(missingTexts, { pooling: "mean", normalize: true });
+        const vectors = extractVectorsFromTensor(output, missingTexts.length);
+        missingIndices.forEach((origIdx, i) => {
+            setLruEntry(texts[origIdx], vectors[i]);
+        });
+        saveEmbeddingCache();
+    }
+
+    return texts.map(t => lruCache.get(t));
+}
+
+/**
+ * Computes embeddings for an array of texts with optional prefix.
+ */
+export async function computeEmbeddings(texts, prefix = "Query:", onStatus) {
+    const formattedTexts = texts.map(t => (prefix ? `${prefix} ${String(t).trim()}` : String(t).trim()));
+    return computeRawEmbeddings(formattedTexts, onStatus);
+}
+
+/**
+ * #42 & #43: Full-precision cosine similarity without premature .toFixed(4) rounding.
  */
 export function cosineSimilarity(vecA, vecB) {
-    if (!vecA || !vecB || vecA.length !== vecB.length) return 0;
-    let dot = 0;
-    for (let i = 0; i < vecA.length; i++) {
-        dot += vecA[i] * vecB[i];
-    }
-    return Number(dot.toFixed(4));
+    return cosineSimilarityRaw(vecA, vecB);
 }
 
 /**
  * Projects high-dimensional embeddings to 2D using UMAP.
- *
- * @param {number[][]} embeddings - High-dimensional vector array
- * @param {object} [options] - UMAP options (nNeighbors, minDist)
- * @returns {number[][]} 2D coordinates [ [x, y], ... ]
  */
 export function project2DUMAP(embeddings, options = {}) {
     if (!embeddings || embeddings.length === 0) return [];
@@ -176,10 +194,11 @@ export function project2DUMAP(embeddings, options = {}) {
 
     const umap = new UMAP({
         nComponents: 2,
-        nNeighbors: nNeighbors,
-        minDist: minDist
+        nNeighbors,
+        minDist
     });
 
-    const coords = umap.fit(embeddings);
+    const plainArrays = embeddings.map(v => Array.from(v));
+    const coords = umap.fit(plainArrays);
     return coords.map(c => [Number(c[0].toFixed(4)), Number(c[1].toFixed(4))]);
 }

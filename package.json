@@ -1,0 +1,14 @@
+{
+  "name": "tokensafe-remaster",
+  "version": "0.1.0",
+  "description": "TokenSafe Remaster - Qwen3-Embedding-0.6B-ONNX & Fenix Vector Decision Primitives",
+  "type": "module",
+  "scripts": {
+    "test": "node bench/test_remaster.mjs",
+    "bench": "node bench/eval_accuracy.mjs --limit 5",
+    "summarize": "node bench/eval_accuracy.mjs summarize"
+  },
+  "dependencies": {
+    "@huggingface/transformers": "^3.5.2"
+  }
+}
