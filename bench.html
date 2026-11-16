@@ -2,60 +2,14 @@
 <html lang="es">
 <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>TokenSafe Remaster — Suite de Benchmarks (Qwen3-Embedding-0.6B WebGPU/WASM)</title>
-    <link rel="stylesheet" href="css/styles.css" />
-    <style>
-        body { overflow: auto; padding: 24px; background: #0b0f19; color: #e2e8f0; font-family: 'Inter', sans-serif; }
-        .bench-container { max-width: 1180px; margin: 0 auto; }
-        .bench-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; padding-bottom: 16px; border-bottom: 1px solid #1e293b; }
-        .bench-controls { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; background: #111827; padding: 14px 18px; border-radius: 10px; border: 1px solid #1f2937; margin-bottom: 20px; }
-        .bench-controls select, .bench-controls input { background: #1f2937; color: #f8fafc; border: 1px solid #374151; padding: 7px 12px; border-radius: 6px; font-family: 'JetBrains Mono', monospace; }
-        .btn-run-bench { background: #10b981; color: #052e16; font-weight: 700; border: none; padding: 8px 18px; border-radius: 6px; cursor: pointer; }
-        .btn-run-bench:disabled { opacity: 0.5; cursor: not-allowed; }
-        .bench-summary-table { width: 100%; border-collapse: collapse; margin-bottom: 20px; background: #111827; border-radius: 8px; overflow: hidden; font-family: 'JetBrains Mono', monospace; font-size: 13px; }
-        .bench-summary-table th, .bench-summary-table td { padding: 10px 14px; text-align: left; border-bottom: 1px solid #1f2937; }
-        .bench-summary-table th { background: #1e293b; color: #94a3b8; }
-        .bench-log { background: #090d16; border: 1px solid #1e293b; border-radius: 8px; padding: 16px; font-family: 'JetBrains Mono', monospace; font-size: 12.5px; line-height: 1.55; max-height: 520px; overflow-y: auto; white-space: pre-wrap; }
-        .ok { color: #34d399; }
-        .fail { color: #f87171; }
-    </style>
+    <meta http-equiv="refresh" content="0; url=index.html#bench" />
+    <title>TokenSafe Remaster — Redirigiendo a Suite de Benchmarks</title>
+    <script>
+        window.location.replace("index.html#bench");
+    </script>
 </head>
-<body>
-    <div class="bench-container">
-        <div class="bench-header">
-            <div>
-                <h1 style="margin:0; font-size:20px;">⚡ TokenSafe Remaster — Suite de Evaluación (`Qwen3-Embedding-0.6B-ONNX`)</h1>
-                <p style="margin:4px 0 0; color:#94a3b8; font-size:13px;">Tecnología: Embeddings $D=1024$ ($L_2$) + Similitud Coseno + Softmax Calibrado (`js/primitives.js`)</p>
-            </div>
-            <a href="index.html" class="btn-top-action" style="text-decoration:none;">← Volver al Playground</a>
-        </div>
-
-        <div class="bench-controls">
-            <label>Muestras por tarea (`--limit`):
-                <input type="number" id="inp-limit" value="5" min="1" max="50" style="width:70px;" />
-            </label>
-            <label>Tarea:
-                <select id="sel-task">
-                    <option value="all">Todas las 8 suites (ag_news, amazon, boolq, emotion, irony, sms_spam, sst2, sst5)</option>
-                    <option value="ag_news">ag_news (choice)</option>
-                    <option value="amazon">amazon (score)</option>
-                    <option value="boolq">boolq (noul)</option>
-                    <option value="emotion">emotion (choice)</option>
-                    <option value="irony">irony (noul)</option>
-                    <option value="sms_spam">sms_spam (noul)</option>
-                    <option value="sst2">sst2 (noul)</option>
-                    <option value="sst5">sst5 (score)</option>
-                </select>
-            </label>
-            <button type="button" class="btn-run-bench" id="btn-start-bench">Ejecutar Benchmark</button>
-            <span id="bench-status" style="color:#38bdf8; font-size:13px; margin-left:auto;">Listo para iniciar</span>
-        </div>
-
-        <div id="summary-container"></div>
-        <div class="bench-log" id="bench-log">Pulsa "Ejecutar Benchmark" para cargar Qwen3-Embedding-0.6B-ONNX y evaluar los datasets...</div>
-    </div>
-
-    <script type="module" src="js/bench-web.js"></script>
+<body style="background:#0b0f19; color:#94a3b8; font-family:'Inter',sans-serif; padding:40px; text-align:center;">
+    <p>Redirigiendo a la Suite de Benchmarks integrada en el Playground...</p>
+    <p><a href="index.html#bench" style="color:#10b981; text-decoration:none; font-weight:600;">Haz clic aquí si tu navegador no redirige automáticamente</a></p>
 </body>
 </html>

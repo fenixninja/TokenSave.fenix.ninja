@@ -27,6 +27,7 @@ import {
     escapeHtml
 } from "./ui.js";
 import { loadCaseExample } from "./case-examples-loader.js";
+import { initBenchmarkSuite } from "./bench-web.js";
 
 // Global Application State
 const appState = {
@@ -747,6 +748,45 @@ function setupEventListeners() {
             showToast("JSON copied to clipboard.", "success");
         });
     }
+
+    // SPA View Switcher: Playground vs Benchmarks (Single Model in Memory)
+    const tabPlayground = document.getElementById("tab-nav-playground");
+    const tabBench = document.getElementById("tab-nav-bench");
+    const viewPlayground = document.getElementById("playground-body");
+    const viewBench = document.getElementById("bench-body");
+
+    function setSpaView(view) {
+        if (view === "bench") {
+            if (viewPlayground) viewPlayground.style.display = "none";
+            if (viewBench) viewBench.style.display = "block";
+            if (tabPlayground) tabPlayground.classList.remove("active");
+            if (tabBench) tabBench.classList.add("active");
+            try { history.replaceState(null, "", "#bench"); } catch (_) {}
+        } else {
+            if (viewBench) viewBench.style.display = "none";
+            if (viewPlayground) viewPlayground.style.display = "";
+            if (tabBench) tabBench.classList.remove("active");
+            if (tabPlayground) tabPlayground.classList.add("active");
+            try { history.replaceState(null, "", "#playground"); } catch (_) {}
+        }
+    }
+
+    if (tabPlayground) tabPlayground.addEventListener("click", () => setSpaView("playground"));
+    if (tabBench) tabBench.addEventListener("click", () => setSpaView("bench"));
+
+    if (window.location.hash === "#bench") {
+        setSpaView("bench");
+    }
+
+    // Initialize Benchmark Suite runner connected to the shared model instance
+    initBenchmarkSuite(() => {
+        appState.modelReady = true;
+        appState.modelLoading = false;
+        el.rlcdStatusIndicator.className = "model-status-indicator ready";
+        el.rlcdBtnText.textContent = "POMDP (Listo)";
+        if (el.modalStatusDot) el.modalStatusDot.className = "model-status-indicator ready";
+        if (el.modalBtnConfirmText) el.modalBtnConfirmText.textContent = "POMDP Listo";
+    });
 }
 
 /**

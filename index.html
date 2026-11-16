@@ -93,9 +93,15 @@
                 </div>
 
                 <div class="top-bar-right">
-                    <a href="bench.html" class="btn-top-action" style="text-decoration:none; color:#10b981; border-color:rgba(16,185,129,0.4);" title="Open WebGPU/WASM Benchmark Suite (8 Datasets)">
-                        ⚡ Benchmarks
-                    </a>
+                    <!-- SPA View Switcher: Playground vs Benchmarks -->
+                    <div class="top-nav-tabs">
+                        <button type="button" class="top-nav-tab active" id="tab-nav-playground" title="Switch to Playground Workspace">
+                            🧪 Playground
+                        </button>
+                        <button type="button" class="top-nav-tab" id="tab-nav-bench" title="Switch to 8-Suite Benchmark Runner">
+                            ⚡ Benchmarks (8 suites)
+                        </button>
+                    </div>
 
                     <button type="button" class="btn-top-action" id="btn-clear-all" title="Clear State and Questions">
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
@@ -367,6 +373,42 @@
                         </div>
                     </div>
                 </section>
+            </main>
+
+            <!-- Integrated Benchmarks View (Shares exact same model instance in RAM) -->
+            <main class="bench-body" id="bench-body" style="display: none;">
+                <div class="bench-container">
+                    <div class="bench-header">
+                        <div>
+                            <h2 style="margin:0; font-size:18px; font-weight:700;">⚡ Suite de Evaluación Qwen3-Embedding-0.6B-ONNX (v4.1)</h2>
+                            <p style="margin:4px 0 0; color:#94a3b8; font-size:12.5px;">8 benchmarks integrados con Proyección Polar, Estiramiento Sigmoide 0.65 y Umbrales Youden</p>
+                        </div>
+                    </div>
+
+                    <div class="bench-controls">
+                        <label>Muestras por tarea:
+                            <input type="number" id="inp-bench-limit" value="5" min="1" max="60" style="width:65px;" />
+                        </label>
+                        <label>Suite:
+                            <select id="sel-bench-task">
+                                <option value="all">Todas las 8 suites (ag_news, amazon, boolq, emotion, irony, sms_spam, sst2, sst5)</option>
+                                <option value="ag_news">ag_news (choice)</option>
+                                <option value="amazon">amazon (score)</option>
+                                <option value="boolq">boolq (noul)</option>
+                                <option value="emotion">emotion (choice)</option>
+                                <option value="irony">irony (noul)</option>
+                                <option value="sms_spam">sms_spam (noul)</option>
+                                <option value="sst2">sst2 (noul)</option>
+                                <option value="sst5">sst5 (score)</option>
+                            </select>
+                        </label>
+                        <button type="button" class="btn-run-bench" id="btn-start-bench">▶ Ejecutar Benchmark</button>
+                        <span id="bench-status" style="color:#38bdf8; font-size:13px; font-family:monospace; margin-left:auto;">Listo para iniciar</span>
+                    </div>
+
+                    <div id="bench-summary-container"></div>
+                    <div class="bench-log" id="bench-log">Pulsa "Ejecutar Benchmark" para evaluar las tareas seleccionadas...</div>
+                </div>
             </main>
         </div>
     </div>
