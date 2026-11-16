@@ -489,42 +489,62 @@ async function loadRlcdLocal(autoRun = false) {
     if (el.modalStatusDot) el.modalStatusDot.className = "model-status-indicator working";
     if (el.modalBtnConfirmText) el.modalBtnConfirmText.textContent = "Loading...";
 
-    showToast("Initializing local Fenix Vector & POMDP...", "info");
+    showToast("Inicializando Fenix Vector & POMDP local...", "info");
 
+    const tStartLoad = performance.now();
     try {
         await getEmbeddingModel((info) => {
-            if (info.status === "progress") {
+            if (info.status === "initiate") {
+                el.rlcdBtnText.textContent = "Cargando...";
+                if (el.modalProgressText) el.modalProgressText.textContent = `Descargando ${info.file || "modelo"}...`;
+            } else if (info.status === "progress") {
                 const pct = Math.round(info.progress ?? 0);
-                el.rlcdBtnText.textContent = `Loading (${pct}%)`;
-                if (el.modalProgressFill) el.modalProgressFill.style.width = `${pct}%`;
-                if (el.modalProgressText) el.modalProgressText.textContent = `Loading model... ${pct}%`;
+                if (pct < 100) {
+                    el.rlcdBtnText.textContent = `Descargando (${pct}%)`;
+                    if (el.modalProgressFill) el.modalProgressFill.style.width = `${pct}%`;
+                    if (el.modalProgressText) el.modalProgressText.textContent = `Descargando ${info.file || "modelo"}... ${pct}%`;
+                } else {
+                    if (el.modalProgressFill) el.modalProgressFill.style.width = `100%`;
+                    el.rlcdBtnText.textContent = "Compilando ONNX...";
+                    if (el.modalProgressText) el.modalProgressText.textContent = "Descarga 100% completada. Compilando sesion ONNX en CPU...";
+                    if (el.modalBtnConfirmText) el.modalBtnConfirmText.textContent = "Compilando...";
+                }
+            } else if (info.status === "done") {
+                if (el.modalProgressFill) el.modalProgressFill.style.width = `100%`;
+                el.rlcdBtnText.textContent = "Compilando...";
+                if (el.modalProgressText) el.modalProgressText.textContent = "Compilando sesion ONNX en memoria CPU... Por favor, espera.";
             }
         });
+
+        const elapsedSec = ((performance.now() - tStartLoad) / 1000).toFixed(1);
+        console.log(`[App] ¡Modelo cargado y compilado con exito en ${elapsedSec}s! Cerrando modal...`);
 
         appState.modelReady = true;
         appState.modelLoading = false;
 
         el.rlcdStatusIndicator.className = "model-status-indicator ready";
-        el.rlcdBtnText.textContent = "POMDP (Ready)";
+        el.rlcdBtnText.textContent = "POMDP (Listo)";
         if (el.modalStatusDot) el.modalStatusDot.className = "model-status-indicator ready";
-        if (el.modalBtnConfirmText) el.modalBtnConfirmText.textContent = "POMDP Ready";
+        if (el.modalBtnConfirmText) el.modalBtnConfirmText.textContent = "POMDP Listo";
 
-        showToast("Fenix Vector & POMDP is ready.", "success");
+        showToast(`Fenix Vector & POMDP listo (${elapsedSec}s).`, "success");
 
         closePomdpModal();
 
         // Run inference automatically if requested from confirmation dialog
         if (autoRun) {
+            console.log("[App] Ejecutando inferencia automatica tras carga del modelo...");
             await runInference();
         }
     } catch (err) {
-        console.error("Failed to load local ONNX model:", err);
+        console.error("[App] Error critico al inicializar POMDP:", err);
         appState.modelLoading = false;
         el.rlcdStatusIndicator.className = "model-status-indicator";
-        el.rlcdBtnText.textContent = "Load POMDP";
+        el.rlcdBtnText.textContent = "Cargar POMDP";
         if (el.modalStatusDot) el.modalStatusDot.className = "model-status-indicator";
-        if (el.modalBtnConfirmText) el.modalBtnConfirmText.textContent = "Load POMDP";
-        showToast("Failed to initialize POMDP model.", "error");
+        if (el.modalBtnConfirmText) el.modalBtnConfirmText.textContent = "Cargar POMDP";
+        if (el.modalProgressText) el.modalProgressText.textContent = `Error: ${err.message || err}`;
+        showToast("Error al inicializar el modelo POMDP.", "error");
     }
 }
 

@@ -78,14 +78,20 @@ let modelLoadingPromise = null;
  * Initializes or retrieves the singleton Transformers.js embedding pipeline.
  */
 export async function getEmbeddingModel(onProgress) {
-    if (embedPipeline) return embedPipeline;
-    if (modelLoadingPromise) return modelLoadingPromise;
+    if (embedPipeline) {
+        console.log("[Fenix Vector] Pipeline ya existente en memoria cache.");
+        return embedPipeline;
+    }
+    if (modelLoadingPromise) {
+        console.log("[Fenix Vector] Esperando promesa de carga en curso...");
+        return modelLoadingPromise;
+    }
 
+    const tStart = performance.now();
     modelLoadingPromise = (async () => {
+        console.log("%c[Fenix Vector] Iniciando carga de Qwen3-Embedding-0.6B-ONNX", "color: #06b6d4; font-weight: bold;");
+
         // 1. Check if WebGPU is truly supported AND has an active hardware adapter.
-        // In browsers like Brave or Chrome with hardware acceleration disabled,
-        // navigator.gpu exists but requestAdapter() returns null. Attempting WebGPU
-        // would download a 541 MB file, fail, and corrupt the ONNX Runtime WASM init state.
         let hasWebGPU = false;
         if (typeof navigator !== "undefined" && navigator.gpu) {
             try {
@@ -97,6 +103,7 @@ export async function getEmbeddingModel(onProgress) {
         }
 
         if (hasWebGPU) {
+            console.log("[Fenix Vector][Fase 1] Adaptador WebGPU detectado. Intentando inicializar backend WebGPU...");
             try {
                 embedPipeline = await pipeline(
                     "feature-extraction",
@@ -108,20 +115,20 @@ export async function getEmbeddingModel(onProgress) {
                             logSeverityLevel: 3
                         },
                         progress_callback: (info) => {
-                            if (typeof onProgress === "function") onProgress(info);
+                            _logProgress("WebGPU", info, onProgress);
                         }
                     }
                 );
+                console.log(`%c[Fenix Vector] ¡Pipeline WebGPU listo en ${Math.round(performance.now() - tStart)} ms!`, "color: #10b981; font-weight: bold;");
                 return embedPipeline;
             } catch (err) {
-                console.warn("WebGPU initialization failed, falling back to WASM/CPU:", err);
+                console.warn("[Fenix Vector] WebGPU fallo, pasando a WASM/CPU:", err);
             }
         } else {
-            console.log("No WebGPU hardware adapter available or hardware acceleration disabled. Using multithreaded WASM/CPU backend directly.");
+            console.log("[Fenix Vector][Fase 1] Sin WebGPU activo. Usando backend WebAssembly (WASM/CPU) local.");
         }
 
         // 2. Fallback to CPU via WebAssembly (WASM)
-        // Check for Cross-Origin Isolation (required by modern browsers for SharedArrayBuffer multithreading)
         const isIsolated = typeof crossOriginIsolated !== "undefined" && crossOriginIsolated;
         const targetThreads = isIsolated
             ? Math.min(4, (typeof navigator !== "undefined" && navigator.hardwareConcurrency) || 2)
@@ -132,11 +139,12 @@ export async function getEmbeddingModel(onProgress) {
         }
 
         if (isIsolated) {
-            console.log(`[WASM] Cross-Origin Isolation detectado: Multihilo activo con ${targetThreads} nucleos CPU.`);
+            console.log(`%c[Fenix Vector][Fase 2] Cross-Origin Isolation ACTIVO: ${targetThreads} hilos CPU WASM SIMD configurados.`, "color: #10b981;");
         } else {
-            console.log("[WASM] Modo monohilo activo (crossOriginIsolated inactivo). Para activar multihilo a 4 nucleos, ejecuta: python3 server.py 3000");
+            console.warn(`[Fenix Vector][Fase 2] Cross-Origin Isolation INACTIVO: Ejecutando en 1 hilo. (Para 4 hilos, ejecuta: python3 server.py 3000)`);
         }
 
+        console.log("[Fenix Vector][Fase 3] Cargando modelo ONNX cuantizado q4 desde el servidor local...");
         try {
             embedPipeline = await pipeline(
                 "feature-extraction",
@@ -148,19 +156,48 @@ export async function getEmbeddingModel(onProgress) {
                         logSeverityLevel: 3
                     },
                     progress_callback: (info) => {
-                        if (typeof onProgress === "function") onProgress(info);
+                        _logProgress("WASM", info, onProgress);
                     }
                 }
             );
+            const totalMs = Math.round(performance.now() - tStart);
+            console.log(`%c[Fenix Vector] ¡Sesion ONNX WASM compilada y lista para inferencia en ${totalMs} ms!`, "color: #10b981; font-weight: bold; font-size: 13px;");
             return embedPipeline;
         } catch (wasmQ4Err) {
-            console.error("Failed to load quantized WASM model:", wasmQ4Err);
+            console.error("%c[Fenix Vector] ERROR CRITICO al compilar o cargar la sesion ONNX WASM:", "color: #ef4444; font-weight: bold;", wasmQ4Err);
             modelLoadingPromise = null;
             throw wasmQ4Err;
         }
     })();
 
     return modelLoadingPromise;
+}
+
+let _lastReportedPct = -1;
+function _logProgress(backend, info, onProgress) {
+    if (info.status === "initiate") {
+        console.log(`[Fenix Vector][${backend}] Solicitando archivo: ${info.file || info.name || "modelo"}`);
+        _lastReportedPct = -1;
+    } else if (info.status === "progress") {
+        const pct = Math.round(info.progress ?? 0);
+        if (pct % 20 === 0 && pct !== _lastReportedPct) {
+            _lastReportedPct = pct;
+            const mb = info.loaded ? `(${(info.loaded / (1024 * 1024)).toFixed(1)} MB)` : "";
+            console.log(`[Fenix Vector][${backend}] Descarga de ${info.file}: ${pct}% ${mb}`);
+        }
+        if (pct === 100 && _lastReportedPct !== 100) {
+            _lastReportedPct = 100;
+            console.log(`[Fenix Vector][${backend}] Descarga 100% completada. Inicializando compilador de sesion ONNX Runtime en memoria...`);
+        }
+    } else if (info.status === "done") {
+        console.log(`[Fenix Vector][${backend}] Archivo ${info.file} transferido a memoria. Compilando grafo...`);
+    } else if (info.status === "ready") {
+        console.log(`[Fenix Vector][${backend}] Componente listo.`);
+    }
+
+    if (typeof onProgress === "function") {
+        onProgress(info);
+    }
 }
 
 /**
