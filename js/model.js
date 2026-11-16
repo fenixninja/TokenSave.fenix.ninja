@@ -80,10 +80,21 @@ export async function getEmbeddingModel(onProgress) {
     if (modelLoadingPromise) return modelLoadingPromise;
 
     modelLoadingPromise = (async () => {
-        // 1. Check if WebGPU is actually supported by the browser and has an available adapter
-        const canTryWebGPU = typeof navigator !== "undefined" && !!navigator.gpu;
+        // 1. Check if WebGPU is truly supported AND has an active hardware adapter.
+        // In browsers like Brave or Chrome with hardware acceleration disabled,
+        // navigator.gpu exists but requestAdapter() returns null. Attempting WebGPU
+        // would download a 541 MB file, fail, and corrupt the ONNX Runtime WASM init state.
+        let hasWebGPU = false;
+        if (typeof navigator !== "undefined" && navigator.gpu) {
+            try {
+                const adapter = await navigator.gpu.requestAdapter();
+                hasWebGPU = !!adapter;
+            } catch (gpuProbeErr) {
+                hasWebGPU = false;
+            }
+        }
 
-        if (canTryWebGPU) {
+        if (hasWebGPU) {
             try {
                 embedPipeline = await pipeline(
                     "feature-extraction",
@@ -104,7 +115,7 @@ export async function getEmbeddingModel(onProgress) {
                 console.warn("WebGPU initialization failed, falling back to WASM/CPU:", err);
             }
         } else {
-            console.log("No WebGPU adapter detected, using multithreaded WASM/CPU backend.");
+            console.log("No WebGPU hardware adapter available or hardware acceleration disabled. Using multithreaded WASM/CPU backend directly.");
         }
 
         // 2. Fallback to CPU via WebAssembly (WASM)
@@ -130,27 +141,9 @@ export async function getEmbeddingModel(onProgress) {
             );
             return embedPipeline;
         } catch (wasmQ4Err) {
-            console.warn("WASM q4 failed, attempting fp32 fallback:", wasmQ4Err);
-            try {
-                embedPipeline = await pipeline(
-                    "feature-extraction",
-                    "onnx-community/Qwen3-Embedding-0.6B-ONNX",
-                    {
-                        device: "wasm",
-                        dtype: "fp32",
-                        session_options: {
-                            logSeverityLevel: 3
-                        },
-                        progress_callback: (info) => {
-                            if (typeof onProgress === "function") onProgress(info);
-                        }
-                    }
-                );
-                return embedPipeline;
-            } catch (finalErr) {
-                modelLoadingPromise = null;
-                throw finalErr;
-            }
+            console.error("Failed to load quantized WASM model:", wasmQ4Err);
+            modelLoadingPromise = null;
+            throw wasmQ4Err;
         }
     })();
 
