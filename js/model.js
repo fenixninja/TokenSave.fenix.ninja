@@ -20,8 +20,19 @@ env.allowLocalModels = true;
 env.allowRemoteModels = false;
 env.localModelPath = "/models/";
 
+// Configure multithreaded WASM (SharedArrayBuffer) matching physical CPU cores
+const isCrossIsolated = typeof crossOriginIsolated !== "undefined" && crossOriginIsolated;
+const detectedCores = (typeof navigator !== "undefined" && navigator.hardwareConcurrency) || 4;
+export const targetWasmThreads = isCrossIsolated ? Math.min(4, detectedCores) : 1;
+
+if (!env.wasm) env.wasm = {};
+env.wasm.numThreads = targetWasmThreads;
+
 if (env.backends && env.backends.onnx) {
     env.backends.onnx.logLevel = "info";
+    if (env.backends.onnx.wasm) {
+        env.backends.onnx.wasm.numThreads = targetWasmThreads;
+    }
 }
 
 const CACHE_KEY = "fenix_session_cached_embeddings_v2";
@@ -129,8 +140,11 @@ export async function getEmbeddingModel(onProgress) {
         // 2. Fallback to CPU via WebAssembly (WASM)
         const isIsolated = typeof crossOriginIsolated !== "undefined" && crossOriginIsolated;
         const targetThreads = isIsolated
-            ? Math.min(4, (typeof navigator !== "undefined" && navigator.hardwareConcurrency) || 2)
+            ? Math.min(4, (typeof navigator !== "undefined" && navigator.hardwareConcurrency) || 4)
             : 1;
+
+        if (!env.wasm) env.wasm = {};
+        env.wasm.numThreads = targetThreads;
 
         if (env.backends && env.backends.onnx && env.backends.onnx.wasm) {
             env.backends.onnx.wasm.numThreads = targetThreads;
@@ -151,7 +165,9 @@ export async function getEmbeddingModel(onProgress) {
                     device: "wasm",
                     dtype: "q4",
                     session_options: {
-                        logSeverityLevel: 3
+                        logSeverityLevel: 3,
+                        intraOpNumThreads: targetThreads,
+                        interOpNumThreads: 1
                     },
                     progress_callback: (info) => {
                         _logProgress("WASM", info, onProgress);
@@ -249,7 +265,9 @@ async function _executeRawEmbeddings(texts, onStatus) {
     });
 
     const isIsolated = typeof window !== "undefined" && window.crossOriginIsolated;
-    const threads = (env.wasm && env.wasm.numThreads) || 1;
+    const threads = (env.wasm && env.wasm.numThreads) ||
+                    (env.backends && env.backends.onnx && env.backends.onnx.wasm && env.backends.onnx.wasm.numThreads) ||
+                    targetWasmThreads || 1;
 
     console.groupCollapsed(
         `%c[WASM Assembly] Lote de ${texts.length} embeddings (${hitCount} cache, ${missingTexts.length} inferencia CPU)`,
