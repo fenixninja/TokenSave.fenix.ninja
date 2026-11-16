@@ -19,6 +19,14 @@ from datetime import datetime
 PORT = int(sys.argv[1]) if len(sys.argv) > 1 else 3000
 
 class CrossOriginIsolatedHandler(http.server.SimpleHTTPRequestHandler):
+    def do_GET(self):
+        # Gracefully handle browser favicon requests without 404 errors
+        if self.path in ("/favicon.ico", "/favicon.png"):
+            self.send_response(204)
+            self.end_headers()
+            return
+        super().do_GET()
+
     def end_headers(self):
         self.send_header("Cross-Origin-Opener-Policy", "same-origin")
         self.send_header("Cross-Origin-Embedder-Policy", "credentialless")
@@ -28,29 +36,30 @@ class CrossOriginIsolatedHandler(http.server.SimpleHTTPRequestHandler):
 
     def log_message(self, format, *args):
         now = datetime.now().strftime("%H:%M:%S")
-        req_line = args[0] if len(args) > 0 else ""
-        code = str(args[1]) if len(args) > 1 else "---"
-        size = str(args[2]) if len(args) > 2 else "-"
+        try:
+            msg = format % args
+        except Exception:
+            msg = " ".join(str(a) for a in args)
 
-        # Format output with clear color markers
-        if "/models/" in req_line:
+        # Format output with clear color markers safely on the formatted string
+        if "/models/" in msg:
             color = "\033[1;36m"  # Cyan
             tag = "[MODEL]"
-        elif code.startswith("2"):
+        elif " 200 " in f" {msg} ":
             color = "\033[32m"    # Green
             tag = "[OK 200]"
-        elif code.startswith("3"):
+        elif " 304 " in f" {msg} ":
             color = "\033[33m"    # Yellow
             tag = "[CACHE]"
-        elif code.startswith("4"):
+        elif any(e in msg for e in [" 404 ", "code 404"]):
             color = "\033[1;31m"  # Red
-            tag = f"[ERR {code}]"
+            tag = "[404]"
         else:
             color = "\033[0m"
-            tag = f"[{code}]"
+            tag = "[HTTP]"
         reset = "\033[0m"
 
-        print(f"[{now}] {color}{tag}{reset} {req_line} ({size} bytes)", flush=True)
+        print(f"[{now}] {color}{tag}{reset} {msg}", flush=True)
 
 class ThreadingHTTPServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
     daemon_threads = True
