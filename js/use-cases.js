@@ -31,7 +31,7 @@ export const USE_CASE_CATEGORIES = {
     operaciones: {
         id: "operaciones",
         name: "Business & Operations",
-        cases: ["support_fanout", "composite_resume", "banking_confidence"]
+        cases: ["system_one_benchmarks", "support_fanout", "composite_resume", "banking_confidence"]
     },
     seguridad: {
         id: "seguridad",
@@ -51,6 +51,41 @@ export const USE_CASE_CATEGORIES = {
 };
 
 export const USE_CASES = {
+    // ==========================================
+    // 0. SYSTEM ONE BENCHMARKS & TESTS (3 PRESETS)
+    // ==========================================
+    system_one_benchmarks: {
+        id: "system_one_benchmarks",
+        category: "operaciones",
+        name: "System One API Tests (Billing, Bug Triage & Routing)",
+        shortName: "System One Tests",
+        icon: USE_CASE_ICONS.incident_response,
+        tag: "System One",
+        badgeColor: "#10b981",
+        description: "Official System One test cases (Choice, Score, Noul) evaluated with Qwen3-Embedding-0.6B-ONNX and Fenix Vector Softmax calibration.",
+        docRef: "bench/eval_accuracy.mjs",
+        defaultInput: JSON.stringify({
+            text: "I was charged twice. Please help ASAP.",
+            name: "1. Billing + Tone + Urgency (System One Quickstart)",
+            use_case: "system_one_benchmarks",
+            example_index: 1
+        }, null, 2),
+        presets: [
+            {
+                name: "1. Billing + Tone + Urgency (Quickstart)",
+                text: "I was charged twice. Please help ASAP."
+            },
+            {
+                name: "2. Safari Export Crash Severity",
+                text: "The export button crashes in Safari."
+            },
+            {
+                name: "3. Multi-Question Routing (Team + Urgency + Asks)",
+                text: "Hi, our engineering team of 40 needs enterprise pricing and SSO integration. Can you send a quote?"
+            }
+        ]
+    },
+
     // ==========================================
     // 1. SUPPORT FAN-OUT (15 PRESETS)
     // ==========================================

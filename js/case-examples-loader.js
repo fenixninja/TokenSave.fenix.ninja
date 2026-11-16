@@ -6,6 +6,11 @@
  */
 
 export const CASE_EXAMPLES_MANIFEST = {
+    "system_one_benchmarks": [
+        "system_one_01_billing_tone_urgency",
+        "system_one_02_safari_bug_severity",
+        "system_one_03_multi_question_routing"
+    ],
     "banking_confidence": [
         "banking_confidence_01_aprobacion_de_transferencia_clara_alta_confia",
         "banking_confidence_02_comando_ambiguo_de_transferencia_confianza_mo",

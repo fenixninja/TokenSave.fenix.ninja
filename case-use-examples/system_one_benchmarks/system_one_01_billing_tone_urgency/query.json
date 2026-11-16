@@ -1,0 +1,27 @@
+{
+  "billing": {
+    "type": "noul",
+    "instructions": "Is this about billing?",
+    "criteria": {
+      "true": "The message is about billing, duplicate charges, payments, or invoices.",
+      "false": "The message is unrelated to billing or payments."
+    }
+  },
+  "tone": {
+    "type": "choice",
+    "instructions": "What is the tone?",
+    "criteria": {
+      "calm": "Calm, relaxed, and unhurried communication.",
+      "angry": "Hostile, urgent, upset, or demanding immediate resolution."
+    }
+  },
+  "urgency": {
+    "type": "score",
+    "instructions": "How urgent is this?",
+    "criteria": [
+      "Low urgency: routine inquiry with no time pressure.",
+      "Medium urgency: standard issue needing timely response.",
+      "High urgency: critical issue requiring immediate assistance ASAP."
+    ]
+  }
+}

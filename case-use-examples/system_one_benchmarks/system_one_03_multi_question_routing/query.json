@@ -1,0 +1,29 @@
+{
+  "team": {
+    "type": "choice",
+    "instructions": "Which team should handle this text?",
+    "criteria": {
+      "billing": "Payments and invoices",
+      "technical": "Bugs and integrations",
+      "sales": "Pricing, enterprise licenses, quotes, and commercial plans",
+      "other": "General unrelated inquiries"
+    }
+  },
+  "urgency": {
+    "type": "score",
+    "instructions": "How urgent is this text?",
+    "criteria": [
+      "Not urgent: standard commercial or informational question",
+      "Somewhat urgent: time-sensitive operational request",
+      "Very urgent: critical outage or emergency"
+    ]
+  },
+  "asks": {
+    "type": "noul",
+    "instructions": "Does the text ask a question?",
+    "criteria": {
+      "true": "The writer explicitly asks a question or requests a quote/information.",
+      "false": "The text is purely a statement without any question."
+    }
+  }
+}

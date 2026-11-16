@@ -1,0 +1,20 @@
+{
+  "severity": {
+    "type": "score",
+    "instructions": "How severe is this software bug?",
+    "criteria": [
+      "Cosmetic: minor visual or styling glitch with no functional impact.",
+      "Degraded: feature works partially or slowly with a workaround.",
+      "Blocking: complete crash or failure of the feature preventing completion."
+    ]
+  },
+  "team": {
+    "type": "choice",
+    "instructions": "Which team should handle this report?",
+    "criteria": {
+      "billing": "Payments, invoices, and refunds",
+      "technical": "Software bugs, browser crashes, and engineering defects",
+      "sales": "Pricing, enterprise plans, and quotes"
+    }
+  }
+}

@@ -15,13 +15,23 @@ import {
     calculateChoiceConfidence,
     analyzeChoiceDistribution,
     calculateScoreValue,
-    softmax
+    softmax,
+    removeCommonCentroid,
+    cslsSimilarity,
+    zScoreNormalize,
+    adaptiveTemperature,
+    projectPolarAxis,
+    stretchScoreExtremes,
+    orthogonalizePair,
+    calculateNoulBayesian
 } from "./primitives.js";
 import {
     getEmbeddingModel,
     computeEmbeddings,
+    computeRawEmbeddings,
     cosineSimilarity
 } from "./model.js";
+import { formatQwenQuery } from "./text-preprocessor.js";
 import {
     validateStateJson,
     validateQueryJson,
@@ -364,8 +374,6 @@ async function runInference() {
     el.btnRunRequest.disabled = true;
 
     try {
-        // Real unit embedding computation via Fenix Vector ONNX
-        const [inputEmbedding] = await computeEmbeddings([inputText], "Query:");
         const results = [];
 
         // Helper to resolve criterion text when value is null or references state
@@ -397,10 +405,15 @@ async function runInference() {
             if (typeNorm === "choice") {
                 const optKeys = Object.keys(qDef.criteria || {});
                 const criteriaTexts = optKeys.map(k => resolveCriterionText(k, qDef.criteria[k]));
-                const critEmbeddings = await computeEmbeddings(criteriaTexts, "Category:");
-                const rawSims = critEmbeddings.map(ce => cosineSimilarity(inputEmbedding, ce));
+                const [qEmb] = await computeRawEmbeddings([formatQwenQuery(instText, inputText)]);
+                const [nullEmb] = await computeRawEmbeddings([formatQwenQuery(instText, "Neutral baseline statement.")]);
+                const rawCritEmbeddings = await computeRawEmbeddings(criteriaTexts);
+                const centeredCrits = removeCommonCentroid(rawCritEmbeddings, 0.80);
+                const nullSims = centeredCrits.map(ce => cosineSimilarity(nullEmb, ce));
+                const rawSims = centeredCrits.map(ce => cosineSimilarity(qEmb, ce));
+                const debiasedSims = cslsSimilarity(rawSims, nullSims, 0.70);
 
-                const probs = softmax(rawSims, 0.05);
+                const probs = softmax(debiasedSims, adaptiveTemperature(0.045, optKeys.length));
                 const maxProb = Math.max(...probs);
                 const winIdx = probs.indexOf(maxProb);
                 const winnerKey = optKeys[winIdx];
@@ -419,7 +432,6 @@ async function runInference() {
                     };
                 });
 
-                // Sort descending by probability
                 options.sort((a, b) => b.pct - a.pct);
 
                 results.push({
@@ -444,11 +456,22 @@ async function runInference() {
                     criteriaTexts = levelKeys.map(k => criteriaObj[k]);
                 }
 
-                const critEmbeddings = await computeEmbeddings(criteriaTexts, "Criteria:");
-                const rawSims = critEmbeddings.map(ce => cosineSimilarity(inputEmbedding, ce));
+                const [qEmb] = await computeRawEmbeddings([formatQwenQuery(instText, inputText)]);
+                const [nullEmb] = await computeRawEmbeddings([formatQwenQuery(instText, "Neutral baseline statement.")]);
+                const rawCritEmbeddings = await computeRawEmbeddings(criteriaTexts);
+                const centeredCrits = removeCommonCentroid(rawCritEmbeddings, 0.85);
+                const nullSims = centeredCrits.map(ce => cosineSimilarity(nullEmb, ce));
+                const rawSims = centeredCrits.map(ce => cosineSimilarity(qEmb, ce));
+                const debiasedSims = cslsSimilarity(rawSims, nullSims, 0.85);
 
-                const probs = softmax(rawSims, 0.07);
+                const polar = projectPolarAxis(qEmb, centeredCrits, nullEmb);
+                const zSims = zScoreNormalize(debiasedSims);
+                const probs = softmax(zSims, 0.65);
                 const scoreValueMetrics = calculateScoreValue(probs);
+                const stretched = stretchScoreExtremes(scoreValueMetrics.expectedScore, scoreValueMetrics.maxLevel, probs, 1.75);
+                const calibratedScore = Number(
+                    Math.max(0, Math.min(scoreValueMetrics.maxLevel, 0.55 * stretched + 0.45 * polar.axisScore)).toFixed(3)
+                );
 
                 const levels = levelKeys.map((k, i) => ({
                     level: Number(k),
@@ -461,11 +484,11 @@ async function runInference() {
                     key: qKey,
                     type: "score",
                     instructions: instText,
-                    expectedScore: scoreValueMetrics.expectedScore,
+                    expectedScore: calibratedScore,
                     maxLevel: scoreValueMetrics.maxLevel,
                     variance: scoreValueMetrics.variance,
                     stdDev: scoreValueMetrics.stdDev,
-                    confidence: 0.38 + (1 - scoreValueMetrics.variance / Math.max(1, scoreValueMetrics.maxLevel)) * 0.5,
+                    confidence: 0.45 + (1 - scoreValueMetrics.variance / Math.max(1, scoreValueMetrics.maxLevel)) * 0.45,
                     levels
                 });
             } else {
@@ -477,22 +500,31 @@ async function runInference() {
                     trueCriteria = qDef.criteria.true || qDef.criteria.True || qDef.criteria["1"] || `${instText} - Yes`;
                     falseCriteria = qDef.criteria.false || qDef.criteria.False || qDef.criteria["0"] || `${instText} - No`;
                 } else {
-                    trueCriteria = `${instText} - Yes, explicit evidence confirms this.`;
-                    falseCriteria = `${instText} - No, no evidence found or negative.`;
+                    trueCriteria = `Yes, affirmative and confirmed: ${instText}`;
+                    falseCriteria = `No, negative and not applicable: ${instText}`;
                 }
 
-                const [embTrue, embFalse] = await computeEmbeddings([trueCriteria, falseCriteria], "Condition:");
-                const sTrue = cosineSimilarity(inputEmbedding, embTrue);
-                const sFalse = cosineSimilarity(inputEmbedding, embFalse);
+                const [qEmb, nullEmb, rawTrue, rawFalse] = await computeRawEmbeddings([
+                    formatQwenQuery(instText, inputText),
+                    formatQwenQuery(instText, "Neutral baseline statement."),
+                    trueCriteria,
+                    falseCriteria
+                ]);
+                const [embTrue, embFalse] = orthogonalizePair(rawTrue, rawFalse, 0.65);
+                const sTrue = cosineSimilarity(qEmb, embTrue);
+                const sFalse = cosineSimilarity(qEmb, embFalse);
+                const nullPos = cosineSimilarity(nullEmb, embTrue);
+                const nullNeg = cosineSimilarity(nullEmb, embFalse);
 
-                const probs = softmax([sFalse, sTrue], 0.06);
-                const pTrue = probs[1];
+                const bayesian = calculateNoulBayesian(sTrue, sFalse, 0.055, { nullPos, nullNeg, nullWeight: 0.90 });
 
                 results.push({
                     key: qKey,
                     type: "noul",
                     instructions: instText,
-                    probabilityTrue: pTrue,
+                    probabilityTrue: bayesian.probability,
+                    isTrue: bayesian.isTrue,
+                    isYes: bayesian.isYes,
                     trueCriteria,
                     falseCriteria
                 });
