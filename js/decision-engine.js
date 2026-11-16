@@ -184,26 +184,67 @@ export async function evaluateSystemOne(state, questions, rawEmbedFn) {
     const cleanState = formatCleanState(state);
     const answers = {};
     const diagnostics = {};
+    const qEntries = Object.entries(questions);
 
-    for (const [qKey, qDef] of Object.entries(questions)) {
-        const geom = await compileQuestionGeometry(qKey, qDef, rawEmbedFn);
+    // 1. Compile geometries in parallel (uses compiledQuestionCache in memory)
+    const geoms = await Promise.all(
+        qEntries.map(([qKey, qDef]) => compileQuestionGeometry(qKey, qDef, rawEmbedFn))
+    );
+
+    // 2. Build flat unified batch of all required query prompts for single session.run()
+    const promptBatch = [];
+    const metaList = [];
+
+    for (let i = 0; i < qEntries.length; i++) {
+        const [qKey, qDef] = qEntries[i];
+        const geom = geoms[i];
         const instText = geom.instText;
-        const surface = extractSurfaceSignals(cleanState, instText);
 
-        // #36 & #37: Adversative clause segmentation (gives higher weight to post-"but" clause)
-        const textForQuery = geom.domain === "sms_spam" ? normalizeSmsText(cleanState) : cleanState;
-        const clauses = splitAdversativeClauses(textForQuery);
-
-        const queryPrompts = [formatQwenQuery(instText, clauses.full)];
-        if (clauses.hasPivot) {
-            queryPrompts.push(formatQwenQuery(instText, clauses.tail));
-            queryPrompts.push(formatQwenQuery(instText, clauses.head));
+        // Domain-specific state text conditioning
+        let stateForQuery = cleanState;
+        if (geom.domain === "boolq" && cleanState.length > 550) {
+            // #29 & v4: Fast CPU saliency selection to avoid attention quadratic latency
+            stateForQuery = selectSalientSentences(cleanState, instText, 2);
+        } else if (geom.domain === "sms_spam") {
+            stateForQuery = normalizeSmsText(cleanState);
         }
 
-        const queryVecs = await rawEmbedFn(queryPrompts);
-        const stateVec = clauses.hasPivot
-            ? blendVectors(queryVecs[0], queryVecs[1], 0.45, 0.55)
-            : queryVecs[0];
+        const clauses = splitAdversativeClauses(stateForQuery);
+        const startIndex = promptBatch.length;
+
+        const mainPrompt = geom.domain === "boolq"
+            ? formatQwenQuery(`Answer whether the passage supports the claim: ${instText}`, stateForQuery)
+            : formatQwenQuery(instText, clauses.full);
+
+        promptBatch.push(mainPrompt);
+
+        if (clauses.hasPivot && geom.domain !== "boolq") {
+            promptBatch.push(formatQwenQuery(instText, clauses.tail));
+            promptBatch.push(formatQwenQuery(instText, clauses.head));
+        }
+
+        metaList.push({
+            qKey,
+            qDef,
+            geom,
+            startIndex,
+            hasPivot: clauses.hasPivot && geom.domain !== "boolq",
+            salientSnippet: (geom.domain === "boolq" && cleanState.length > 550) ? stateForQuery : null
+        });
+    }
+
+    // 3. Execute ONE SINGLE batched ONNX inference pass for all fields
+    const allQueryVecs = await rawEmbedFn(promptBatch);
+
+    // 4. Evaluate each question using its corresponding vector
+    for (let i = 0; i < metaList.length; i++) {
+        const { qKey, qDef, geom, startIndex, hasPivot, salientSnippet } = metaList[i];
+        const instText = geom.instText;
+        const stateVec = hasPivot
+            ? blendVectors(allQueryVecs[startIndex], allQueryVecs[startIndex + 1], 0.45, 0.55)
+            : allQueryVecs[startIndex];
+
+        const surface = extractSurfaceSignals(cleanState, instText);
 
         if (geom.type === "choice") {
             const rawSims = geom.centeredOptVecs.map(v => cosineSimilarityRaw(stateVec, v));
@@ -294,17 +335,11 @@ export async function evaluateSystemOne(state, questions, rawEmbedFn) {
                 }
             }
 
-            // #29: High-speed salient sentence selection for long reading comprehension passages (BoolQ)
-            // Uses CPU keyword saliency (0ms overhead) to select the 2 most informative sentences
-            // instead of calling the slow ONNX embedding model for every sentence in the passage.
-            if (geom.domain === "boolq" && cleanState.length > 140) {
-                const salientSnippet = selectSalientSentences(cleanState, instText, 2);
-                const queryPrompt = formatQwenQuery(`Given the passage, verify if: ${instText}`, salientSnippet);
-                const [salientVec] = await rawEmbedFn([queryPrompt]);
-                effectiveVec = blendVectors(salientVec, stateVec, 0.65, 0.35);
-
+            // BoolQ negation awareness on salient passage
+            if (geom.domain === "boolq") {
+                const checkText = (salientSnippet || cleanState).toLowerCase();
                 const qHasNeg = /\b(not|never|no|cannot|can't|illegal)\b/i.test(instText);
-                const sHasNeg = /\b(not|never|cannot|can't|illegal|except|distinct\s+from|unlisted|fictional|no\s+longer|without)\b/i.test(salientSnippet.toLowerCase());
+                const sHasNeg = /\b(not|never|cannot|can't|illegal|except|distinct\s+from|unlisted|fictional|no\s+longer|without)\b/i.test(checkText);
                 if (sHasNeg && !qHasNeg) {
                     extraBoost -= 0.035;
                 } else if (!sHasNeg && !qHasNeg) {

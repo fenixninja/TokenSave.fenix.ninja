@@ -15,6 +15,7 @@ TokenSafe Remaster transforma un modelo de embeddings bi-encoder ligero ($0.6\te
 flowchart LR
     A["Baseline v1 (Original)<br>49.0% Accuracy (235/480)<br>Amazon 0%, SST5 15%"] --> B["Versión v2 (50 Mejoras)<br>61.5% Accuracy (295/480)<br>+12.5 pp Global<br>Amazon 45%, SST5 33%"]
     B --> C["Versión v3 (Calibración)<br>71.3% Accuracy (342/480)<br>+22.3 pp sobre Base<br>Irony 86.7%, SMS 96.7%"]
+    C --> D["Versión v4 (Plan Maestro)<br>Meta: 76%–80% Accuracy<br>Latencia -65% (Batching)<br>Umbrales Youden Óptimos"]
 ```
 
 ### Tabla Resumen de Evolución Empírica ($N = 480$ muestras, $n=60$ por tarea)
