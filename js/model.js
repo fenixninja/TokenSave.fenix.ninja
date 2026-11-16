@@ -80,30 +80,46 @@ export async function getEmbeddingModel(onProgress) {
     if (modelLoadingPromise) return modelLoadingPromise;
 
     modelLoadingPromise = (async () => {
+        // 1. Check if WebGPU is actually supported by the browser and has an available adapter
+        const canTryWebGPU = typeof navigator !== "undefined" && !!navigator.gpu;
+
+        if (canTryWebGPU) {
+            try {
+                embedPipeline = await pipeline(
+                    "feature-extraction",
+                    "onnx-community/Qwen3-Embedding-0.6B-ONNX",
+                    {
+                        device: "webgpu",
+                        dtype: "q4f16",
+                        session_options: {
+                            logSeverityLevel: 3
+                        },
+                        progress_callback: (info) => {
+                            if (typeof onProgress === "function") onProgress(info);
+                        }
+                    }
+                );
+                return embedPipeline;
+            } catch (err) {
+                console.warn("WebGPU initialization failed, falling back to WASM/CPU:", err);
+            }
+        } else {
+            console.log("No WebGPU adapter detected, using multithreaded WASM/CPU backend.");
+        }
+
+        // 2. Fallback to CPU via WebAssembly (WASM)
+        // Configure WASM multithreading
+        if (env.backends && env.backends.onnx && env.backends.onnx.wasm) {
+            env.backends.onnx.wasm.numThreads = Math.min(4, (typeof navigator !== "undefined" && navigator.hardwareConcurrency) || 2);
+        }
+
         try {
             embedPipeline = await pipeline(
                 "feature-extraction",
                 "onnx-community/Qwen3-Embedding-0.6B-ONNX",
                 {
-                    device: "webgpu",
-                    dtype: "q4f16",
-                    session_options: {
-                        logSeverityLevel: 3
-                    },
-                    progress_callback: (info) => {
-                        if (typeof onProgress === "function") onProgress(info);
-                    }
-                }
-            );
-            return embedPipeline;
-        } catch (err) {
-            console.warn("WebGPU initialization failed, falling back to WASM/CPU:", err);
-            embedPipeline = await pipeline(
-                "feature-extraction",
-                "onnx-community/Qwen3-Embedding-0.6B-ONNX",
-                {
                     device: "wasm",
-                    dtype: "q4f16",
+                    dtype: "q4",
                     session_options: {
                         logSeverityLevel: 3
                     },
@@ -113,6 +129,28 @@ export async function getEmbeddingModel(onProgress) {
                 }
             );
             return embedPipeline;
+        } catch (wasmQ4Err) {
+            console.warn("WASM q4 failed, attempting fp32 fallback:", wasmQ4Err);
+            try {
+                embedPipeline = await pipeline(
+                    "feature-extraction",
+                    "onnx-community/Qwen3-Embedding-0.6B-ONNX",
+                    {
+                        device: "wasm",
+                        dtype: "fp32",
+                        session_options: {
+                            logSeverityLevel: 3
+                        },
+                        progress_callback: (info) => {
+                            if (typeof onProgress === "function") onProgress(info);
+                        }
+                    }
+                );
+                return embedPipeline;
+            } catch (finalErr) {
+                modelLoadingPromise = null;
+                throw finalErr;
+            }
         }
     })();
 

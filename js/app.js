@@ -12,26 +12,10 @@
 
 import { USE_CASES, USE_CASE_CATEGORIES } from "./use-cases.js";
 import {
-    calculateChoiceConfidence,
-    analyzeChoiceDistribution,
-    calculateScoreValue,
-    softmax,
-    removeCommonCentroid,
-    cslsSimilarity,
-    zScoreNormalize,
-    adaptiveTemperature,
-    projectPolarAxis,
-    stretchScoreExtremes,
-    orthogonalizePair,
-    calculateNoulBayesian
-} from "./primitives.js";
-import {
     getEmbeddingModel,
-    computeEmbeddings,
-    computeRawEmbeddings,
-    cosineSimilarity
+    computeRawEmbeddings
 } from "./model.js";
-import { formatQwenQuery } from "./text-preprocessor.js";
+import { evaluateSystemOne } from "./decision-engine.js";
 import {
     validateStateJson,
     validateQueryJson,
@@ -376,155 +360,73 @@ async function runInference() {
     try {
         const results = [];
 
-        // Helper to resolve criterion text when value is null or references state
-        const resolveCriterionText = (k, rawVal) => {
-            if (rawVal !== null && rawVal !== undefined && String(rawVal).trim() !== "" && String(rawVal) !== "null") {
-                return `${k}: ${rawVal}`;
-            }
-            const cleanKey = String(k).replace(/[`'"]/g, "").trim();
-            const arrayMatch = cleanKey.match(/^([a-zA-Z0-9_]+)\[(\d+)\]$/);
-            if (arrayMatch) {
-                const field = arrayMatch[1];
-                const idx = parseInt(arrayMatch[2], 10);
-                const st = stateObj.state || stateObj;
-                if (st && Array.isArray(st[field]) && st[field][idx] !== undefined) {
-                    return String(st[field][idx]);
-                }
-            }
-            const st = stateObj.state || stateObj;
-            if (st && st[cleanKey] !== undefined && typeof st[cleanKey] !== "object") {
-                return `${cleanKey}: ${st[cleanKey]}`;
-            }
-            return cleanKey;
-        };
+        // #46 & v4.1: Unified evaluation via evaluateSystemOne (includes batched multi-field inference,
+        // calibrated Youden thresholds, 0.65 edge stretching, and enriched semantic prototypes)
+        const { answers, diagnostics } = await evaluateSystemOne(stateObj, questionsObj, computeRawEmbeddings);
 
         for (const [qKey, qDef] of Object.entries(questionsObj)) {
+            const ans = answers[qKey];
+            const diag = diagnostics[qKey] || {};
             const typeNorm = String(qDef.type || "choice").toLowerCase();
             const instText = getInstructionText(qDef.instructions);
 
             if (typeNorm === "choice") {
-                const optKeys = Object.keys(qDef.criteria || {});
-                const criteriaTexts = optKeys.map(k => resolveCriterionText(k, qDef.criteria[k]));
-                const [qEmb] = await computeRawEmbeddings([formatQwenQuery(instText, inputText)]);
-                const [nullEmb] = await computeRawEmbeddings([formatQwenQuery(instText, "Neutral baseline statement.")]);
-                const rawCritEmbeddings = await computeRawEmbeddings(criteriaTexts);
-                const centeredCrits = removeCommonCentroid(rawCritEmbeddings, 0.80);
-                const nullSims = centeredCrits.map(ce => cosineSimilarity(nullEmb, ce));
-                const rawSims = centeredCrits.map(ce => cosineSimilarity(qEmb, ce));
-                const debiasedSims = cslsSimilarity(rawSims, nullSims, 0.70);
-
-                const probs = softmax(debiasedSims, adaptiveTemperature(0.045, optKeys.length));
-                const maxProb = Math.max(...probs);
-                const winIdx = probs.indexOf(maxProb);
-                const winnerKey = optKeys[winIdx];
-                const choiceMetrics = analyzeChoiceDistribution(probs);
-
-                const options = optKeys.map((k, i) => {
-                    const desc = (qDef.criteria[k] !== null && qDef.criteria[k] !== undefined && String(qDef.criteria[k]) !== "null")
-                        ? String(qDef.criteria[k])
-                        : resolveCriterionText(k, null);
-                    return {
-                        key: k,
-                        description: desc,
-                        probability: probs[i],
-                        pct: probs[i] * 100,
-                        isWinner: i === winIdx
-                    };
-                });
-
+                const probsObj = ans.probabilities || {};
+                const optKeys = Object.keys(probsObj);
+                const options = optKeys.map(k => ({
+                    key: k,
+                    description: (qDef.criteria && qDef.criteria[k]) || k,
+                    probability: probsObj[k] || 0,
+                    pct: (probsObj[k] || 0) * 100,
+                    isWinner: k === ans.choice
+                }));
                 options.sort((a, b) => b.pct - a.pct);
 
                 results.push({
                     key: qKey,
                     type: "choice",
                     instructions: instText,
-                    winnerOption: options[0],
-                    confidence: choiceMetrics.confidence,
-                    entropyBits: choiceMetrics.entropyBits,
-                    marginDelta: choiceMetrics.marginDelta,
+                    winnerOption: options[0] || { key: ans.choice, pct: 100 },
+                    confidence: ans.confidence || 0.8,
+                    entropyBits: (diag.uncertainty && diag.uncertainty.entropyBits) || 0,
+                    marginDelta: (diag.uncertainty && (1 - diag.uncertainty.epistemicUncertainty)) || 0,
                     options
                 });
             } else if (typeNorm === "score") {
-                let levelKeys = [];
-                let criteriaTexts = [];
-                if (Array.isArray(qDef.criteria)) {
-                    levelKeys = qDef.criteria.map((_, i) => String(i));
-                    criteriaTexts = qDef.criteria.map(c => String(c));
-                } else {
-                    const criteriaObj = qDef.criteria || {};
-                    levelKeys = Object.keys(criteriaObj).sort((a, b) => Number(a) - Number(b));
-                    criteriaTexts = levelKeys.map(k => criteriaObj[k]);
-                }
-
-                const [qEmb] = await computeRawEmbeddings([formatQwenQuery(instText, inputText)]);
-                const [nullEmb] = await computeRawEmbeddings([formatQwenQuery(instText, "Neutral baseline statement.")]);
-                const rawCritEmbeddings = await computeRawEmbeddings(criteriaTexts);
-                const centeredCrits = removeCommonCentroid(rawCritEmbeddings, 0.85);
-                const nullSims = centeredCrits.map(ce => cosineSimilarity(nullEmb, ce));
-                const rawSims = centeredCrits.map(ce => cosineSimilarity(qEmb, ce));
-                const debiasedSims = cslsSimilarity(rawSims, nullSims, 0.85);
-
-                const polar = projectPolarAxis(qEmb, centeredCrits, nullEmb);
-                const zSims = zScoreNormalize(debiasedSims);
-                const probs = softmax(zSims, 0.65);
-                const scoreValueMetrics = calculateScoreValue(probs);
-                const stretched = stretchScoreExtremes(scoreValueMetrics.expectedScore, scoreValueMetrics.maxLevel, probs, 1.75);
-                const calibratedScore = Number(
-                    Math.max(0, Math.min(scoreValueMetrics.maxLevel, 0.55 * stretched + 0.45 * polar.axisScore)).toFixed(3)
-                );
-
-                const levels = levelKeys.map((k, i) => ({
+                const probsObj = ans.probabilities || {};
+                const levelKeys = Object.keys(probsObj).sort((a, b) => Number(a) - Number(b));
+                const levels = levelKeys.map(k => ({
                     level: Number(k),
-                    description: criteriaTexts[i] || `Level ${k}`,
-                    probability: probs[i],
-                    pct: probs[i] * 100
+                    description: (ans.legend && ans.legend[k]) || (qDef.criteria && qDef.criteria[k]) || `Level ${k}`,
+                    probability: probsObj[k] || 0,
+                    pct: (probsObj[k] || 0) * 100
                 }));
 
                 results.push({
                     key: qKey,
                     type: "score",
                     instructions: instText,
-                    expectedScore: calibratedScore,
-                    maxLevel: scoreValueMetrics.maxLevel,
-                    variance: scoreValueMetrics.variance,
-                    stdDev: scoreValueMetrics.stdDev,
-                    confidence: 0.45 + (1 - scoreValueMetrics.variance / Math.max(1, scoreValueMetrics.maxLevel)) * 0.45,
+                    expectedScore: ans.score,
+                    level: ans.level !== undefined ? ans.level : Math.round(ans.score),
+                    argmaxLevel: ans.argmaxLevel,
+                    maxLevel: Math.max(1, levelKeys.length - 1),
+                    confidence: ans.confidence || 0.75,
                     levels
                 });
             } else {
-                // Noul / Bool
-                let trueCriteria = "";
-                let falseCriteria = "";
-
-                if (qDef.criteria && typeof qDef.criteria === "object") {
-                    trueCriteria = qDef.criteria.true || qDef.criteria.True || qDef.criteria["1"] || `${instText} - Yes`;
-                    falseCriteria = qDef.criteria.false || qDef.criteria.False || qDef.criteria["0"] || `${instText} - No`;
-                } else {
-                    trueCriteria = `Yes, affirmative and confirmed: ${instText}`;
-                    falseCriteria = `No, negative and not applicable: ${instText}`;
-                }
-
-                const [qEmb, nullEmb, rawTrue, rawFalse] = await computeRawEmbeddings([
-                    formatQwenQuery(instText, inputText),
-                    formatQwenQuery(instText, "Neutral baseline statement."),
-                    trueCriteria,
-                    falseCriteria
-                ]);
-                const [embTrue, embFalse] = orthogonalizePair(rawTrue, rawFalse, 0.65);
-                const sTrue = cosineSimilarity(qEmb, embTrue);
-                const sFalse = cosineSimilarity(qEmb, embFalse);
-                const nullPos = cosineSimilarity(nullEmb, embTrue);
-                const nullNeg = cosineSimilarity(nullEmb, embFalse);
-
-                const bayesian = calculateNoulBayesian(sTrue, sFalse, 0.055, { nullPos, nullNeg, nullWeight: 0.90 });
+                // Noul
+                const trueCriteria = (qDef.criteria && (qDef.criteria.true || qDef.criteria.True || qDef.criteria["1"])) || "Affirmative and confirmed by evidence";
+                const falseCriteria = (qDef.criteria && (qDef.criteria.false || qDef.criteria.False || qDef.criteria["0"])) || "Negative or unsupported";
 
                 results.push({
                     key: qKey,
                     type: "noul",
                     instructions: instText,
-                    probabilityTrue: bayesian.probability,
-                    isTrue: bayesian.isTrue,
-                    isYes: bayesian.isYes,
+                    probabilityTrue: ans.probability,
+                    isTrue: ans.isTrue,
+                    isYes: ans.isYes,
+                    threshold: ans.threshold,
+                    logOdds: ans.logOdds,
                     trueCriteria,
                     falseCriteria
                 });
