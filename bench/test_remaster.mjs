@@ -14,7 +14,7 @@ import {
     calculateNoulBayesian,
     calculateCompositeScore
 } from "../js/primitives.js";
-import { systemOneRemaster } from "./eval_accuracy.mjs";
+import { systemOneRemaster, setupFileLogger } from "./eval_accuracy.mjs";
 
 async function runUnitTests() {
     console.log("=== 1. Tests Unitarios de Primitivas Matemáticas (js/primitives.js) ===");
@@ -166,10 +166,31 @@ async function runAllCaseExamples() {
 }
 
 async function main() {
+    let outFile = null;
+    for (let i = 0; i < process.argv.length; i++) {
+        if (process.argv[i] === "--out") {
+            if (i + 1 < process.argv.length && !process.argv[i + 1].startsWith("--")) {
+                outFile = process.argv[++i];
+            } else {
+                outFile = path.join("bench", "results", "test_remaster.txt");
+            }
+        }
+    }
+
+    let closeLogger = null;
+    if (outFile) {
+        closeLogger = setupFileLogger(outFile);
+        console.log(`[Logger]: Guardando tests en ${outFile}`);
+    }
+
     await runUnitTests();
     await runSystemOneIntegrationTests();
     if (process.argv.includes("--all") || process.argv.includes("--examples")) {
         await runAllCaseExamples();
+    }
+
+    if (closeLogger) {
+        closeLogger();
     }
 }
 

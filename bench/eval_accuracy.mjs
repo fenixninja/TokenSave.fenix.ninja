@@ -371,12 +371,59 @@ export function loadItems(tasks = null, limit = 5) {
     return items;
 }
 
+/**
+ * Helper to tee console output into a .txt file
+ */
+export function setupFileLogger(outFilePath) {
+    fs.mkdirSync(path.dirname(outFilePath), { recursive: true });
+    const logStream = fs.createWriteStream(outFilePath, { flags: "w", encoding: "utf8" });
+    const origLog = console.log;
+    const origError = console.error;
+
+    console.log = (...args) => {
+        origLog(...args);
+        const str = args.map(a => (typeof a === "object" ? JSON.stringify(a) : String(a))).join(" ");
+        logStream.write(str + "\n");
+    };
+
+    console.error = (...args) => {
+        origError(...args);
+        const str = args.map(a => (typeof a === "object" ? JSON.stringify(a) : String(a))).join(" ");
+        logStream.write("[ERROR] " + str + "\n");
+    };
+
+    return () => {
+        logStream.end();
+        console.log = origLog;
+        console.error = origError;
+    };
+}
+
 async function main() {
     const args = process.argv.slice(2);
+    let outFile = null;
+
+    // Check for --out flag early so even compare/summarize can be recorded
+    for (let i = 0; i < args.length; i++) {
+        if (args[i] === "--out") {
+            if (i + 1 < args.length && !args[i + 1].startsWith("--")) {
+                outFile = args[i + 1];
+            } else {
+                outFile = "DEFAULT";
+            }
+        }
+    }
+
+    let closeLogger = null;
+
     if (args[0] === "summarize") {
         if (!fs.existsSync(RESULTS_FILE)) {
             console.log(`⚠ No existe ${RESULTS_FILE}. Ejecuta primero el benchmark.`);
             return;
+        }
+        if (outFile) {
+            const finalOut = outFile === "DEFAULT" ? path.join("bench", "results", "summary.txt") : outFile;
+            closeLogger = setupFileLogger(finalOut);
         }
         const allRows = fs.readFileSync(RESULTS_FILE, "utf8").split("\n").filter(l => l.trim()).map(l => JSON.parse(l));
         const byRun = new Map();
@@ -388,6 +435,7 @@ async function main() {
             console.log(`=== Run: ${rName} (${rs.length} items) ===`);
             quickSummary(rs, rName);
         }
+        if (closeLogger) closeLogger();
         return;
     }
 
@@ -396,8 +444,13 @@ async function main() {
             console.log(`⚠ No existe ${RESULTS_FILE}.`);
             return;
         }
+        if (outFile) {
+            const finalOut = outFile === "DEFAULT" ? path.join("bench", "results", "compare.txt") : outFile;
+            closeLogger = setupFileLogger(finalOut);
+        }
         const allRows = fs.readFileSync(RESULTS_FILE, "utf8").split("\n").filter(l => l.trim()).map(l => JSON.parse(l));
         compareRuns(allRows, args[1], args[2]);
+        if (closeLogger) closeLogger();
         return;
     }
 
@@ -413,12 +466,24 @@ async function main() {
             runName = args[++i];
         } else if (args[i] === "--explain-failures") {
             explainFailures = true;
+        } else if (args[i] === "--out") {
+            if (i + 1 < args.length && !args[i + 1].startsWith("--")) {
+                i++; // skip argument already handled
+            }
         } else if (args[i] === "--tasks") {
             tasks = [];
             while (i + 1 < args.length && !args[i + 1].startsWith("--")) {
                 tasks.push(args[++i]);
             }
         }
+    }
+
+    if (outFile) {
+        const finalOut = outFile === "DEFAULT"
+            ? path.join("bench", "results", `eval_${runName.replace(/[\/\\]/g, "_")}.txt`)
+            : outFile;
+        closeLogger = setupFileLogger(finalOut);
+        console.log(`[Logger]: Guardando salida completa en ${finalOut}`);
     }
 
     const items = loadItems(tasks, limit);
@@ -506,6 +571,10 @@ async function main() {
         if (runName !== baselineToCompare) {
             compareRuns(allSaved, baselineToCompare, runName);
         }
+    }
+
+    if (closeLogger) {
+        closeLogger();
     }
 }
 
