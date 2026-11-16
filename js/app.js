@@ -436,6 +436,18 @@ async function runInference() {
 
         appState.lastResults = results;
 
+        console.group("%c[Decision Engine v4.1] Resultados Evaluados", "color: #10b981; font-weight: bold; font-size: 13px;");
+        results.forEach(r => {
+            if (r.type === "choice") {
+                console.log(`  ✓ [Choice] %c${r.key}%c -> Ganador: %c"${r.winnerOption.key}"%c (${r.winnerOption.pct.toFixed(1)}%) | Confianza: ${(r.confidence * 100).toFixed(1)}%`, "font-weight:bold;", "", "color:#10b981;font-weight:bold;", "");
+            } else if (r.type === "score") {
+                console.log(`  ✓ [Score] %c${r.key}%c -> Nivel: %c${r.level}%c (Score: ${r.expectedScore.toFixed(2)}) | Confianza: ${(r.confidence * 100).toFixed(1)}%`, "font-weight:bold;", "", "color:#38bdf8;font-weight:bold;", "");
+            } else {
+                console.log(`  ✓ [Noul] %c${r.key}%c -> %c${r.isTrue ? "TRUE" : "FALSE"}%c (Prob: ${(r.probabilityTrue * 100).toFixed(1)}% vs Umbral ${(r.threshold * 100).toFixed(1)}%)`, "font-weight:bold;", "", r.isTrue ? "color:#10b981;font-weight:bold;" : "color:#f87171;font-weight:bold;", "");
+            }
+        });
+        console.groupEnd();
+
         // Render Accordion Table
         renderResponseAccordion(results, el.responseAccordionList);
 

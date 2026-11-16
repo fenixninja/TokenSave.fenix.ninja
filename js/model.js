@@ -21,7 +21,7 @@ env.allowRemoteModels = false;
 env.localModelPath = "/models/";
 
 if (env.backends && env.backends.onnx) {
-    env.backends.onnx.logLevel = "error";
+    env.backends.onnx.logLevel = "info";
 }
 
 const CACHE_KEY = "fenix_session_cached_embeddings_v2";
@@ -79,11 +79,9 @@ let modelLoadingPromise = null;
  */
 export async function getEmbeddingModel(onProgress) {
     if (embedPipeline) {
-        console.log("[Fenix Vector] Pipeline ya existente en memoria cache.");
         return embedPipeline;
     }
     if (modelLoadingPromise) {
-        console.log("[Fenix Vector] Esperando promesa de carga en curso...");
         return modelLoadingPromise;
     }
 
@@ -216,35 +214,121 @@ function extractVectorsFromTensor(output, batchSize) {
     return output.tolist().map(v => new Float32Array(v));
 }
 
+// Serial execution queue to ensure WebAssembly runtime NEVER executes concurrent overlapping session.run() passes
+let inferenceQueue = Promise.resolve();
+
 /**
- * #39 & #41: Computes raw embeddings for an array of pre-formatted strings in a single batch.
+ * #39 & #41: Computes raw embeddings for an array of pre-formatted strings.
+ * Protected by an async mutex queue and chunked in batches of 4 texts to prevent
+ * browser UI freezes and WebAssembly memory exhaustion.
  */
 export async function computeRawEmbeddings(texts, onStatus) {
+    const runTask = inferenceQueue.then(async () => {
+        return await _executeRawEmbeddings(texts, onStatus);
+    });
+    inferenceQueue = runTask.catch(() => {});
+    return await runTask;
+}
+
+async function _executeRawEmbeddings(texts, onStatus) {
     ensureCacheLoaded();
+    const tTotal0 = performance.now();
     const model = await getEmbeddingModel(onStatus);
 
     const missingIndices = [];
     const missingTexts = [];
+    let hitCount = 0;
 
     texts.forEach((t, idx) => {
-        if (!lruCache.has(t)) {
+        if (lruCache.has(t)) {
+            hitCount++;
+        } else {
             missingIndices.push(idx);
             missingTexts.push(t);
         }
     });
 
+    const isIsolated = typeof window !== "undefined" && window.crossOriginIsolated;
+    const threads = (env.wasm && env.wasm.numThreads) || 1;
+
+    console.groupCollapsed(
+        `%c[WASM Assembly] Lote de ${texts.length} embeddings (${hitCount} cache, ${missingTexts.length} inferencia CPU)`,
+        "color: #06b6d4; font-weight: bold; font-size: 12px;"
+    );
+    console.log(
+        `%c  Configuracion WASM:%c ${threads} hilos CPU | %cCross-Origin:%c ${isIsolated ? "Aislado (SharedArrayBuffer activo)" : "Monohilo"} | %cBackend:%c ONNX Runtime WASM (SIMD)`,
+        "color: #94a3b8;", "color: #38bdf8; font-weight: bold;",
+        "color: #94a3b8;", isIsolated ? "color: #10b981; font-weight: bold;" : "color: #f59e0b; font-weight: bold;",
+        "color: #94a3b8;", "color: #a855f7; font-weight: bold;"
+    );
+
     if (missingTexts.length > 0) {
-        if (typeof onStatus === "function") {
-            onStatus({ status: "working", message: `Generando embeddings (${missingTexts.length} nuevos)...` });
-        }
-        const output = await model(missingTexts, { pooling: "mean", normalize: true });
-        const vectors = extractVectorsFromTensor(output, missingTexts.length);
-        missingIndices.forEach((origIdx, i) => {
-            setLruEntry(texts[origIdx], vectors[i]);
+        missingTexts.forEach((txt, i) => {
+            const preview = txt.replace(/\s+/g, " ").slice(0, 95);
+            console.log(
+                `  %c[Entrada ${i + 1}/${missingTexts.length}]%c "${preview}..." %c(${txt.length} chars)%c`,
+                "color: #3b82f6; font-weight: bold;",
+                "color: #cbd5e1;",
+                "color: #a855f7;",
+                "color: #cbd5e1;"
+            );
         });
+
+        // Sub-batch in chunks of 4 to keep attention tensor dimensions compact and prevent UI stalls
+        const CHUNK_SIZE = 4;
+        const totalChunks = Math.ceil(missingTexts.length / CHUNK_SIZE);
+        let completed = 0;
+
+        for (let c = 0; c < totalChunks; c++) {
+            const start = c * CHUNK_SIZE;
+            const end = Math.min(start + CHUNK_SIZE, missingTexts.length);
+            const chunkTexts = missingTexts.slice(start, end);
+
+            // Yield to browser event loop so UI animations and spinner stay 100% fluid
+            await new Promise(r => setTimeout(r, 0));
+
+            if (typeof onStatus === "function") {
+                onStatus({
+                    status: "working",
+                    message: `Inferencia WASM: ${completed + chunkTexts.length}/${missingTexts.length} textos (Lote ${c + 1}/${totalChunks})...`
+                });
+            }
+
+            const tChunkStart = performance.now();
+            const chunkOutput = await model(chunkTexts, { pooling: "mean", normalize: true });
+            const chunkElapsedMs = Math.round(performance.now() - tChunkStart);
+            const chunkVectors = extractVectorsFromTensor(chunkOutput, chunkTexts.length);
+            const perTextMs = (chunkElapsedMs / chunkTexts.length).toFixed(1);
+
+            console.log(
+                `  %c[WASM Chunk ${c + 1}/${totalChunks}]%c ✔ ${chunkTexts.length} textos en %c${chunkElapsedMs} ms%c (%c${perTextMs} ms/texto%c) -> Float32Array[1024]`,
+                "color: #eab308; font-weight: bold;",
+                "color: #94a3b8;",
+                "color: #10b981; font-weight: bold;",
+                "color: #94a3b8;",
+                "color: #38bdf8; font-weight: bold;",
+                "color: #94a3b8;"
+            );
+
+            for (let j = 0; j < chunkTexts.length; j++) {
+                const origIdx = missingIndices[start + j];
+                setLruEntry(texts[origIdx], chunkVectors[j]);
+            }
+            completed += chunkTexts.length;
+        }
+
         saveEmbeddingCache();
+        const totalWasmMs = Math.round(performance.now() - tTotal0);
+        console.log(
+            `%c[WASM Assembly] Resumen final: ${missingTexts.length} textos inferidos en ${totalWasmMs} ms (${(totalWasmMs / missingTexts.length).toFixed(1)} ms/texto)`,
+            "color: #10b981; font-weight: bold;"
+        );
+    } else {
+        const cacheElapsedMs = (performance.now() - tTotal0).toFixed(1);
+        console.log(`%c[WASM Assembly] ⚡ 100% Cache Hit: ${texts.length} vectores recuperados en ${cacheElapsedMs} ms sin coste de CPU.`, "color: #10b981; font-weight: bold;");
     }
 
+    console.groupEnd();
     return texts.map(t => lruCache.get(t));
 }
 

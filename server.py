@@ -20,8 +20,8 @@ PORT = int(sys.argv[1]) if len(sys.argv) > 1 else 3000
 
 class CrossOriginIsolatedHandler(http.server.SimpleHTTPRequestHandler):
     def do_GET(self):
-        # Gracefully handle browser favicon requests without 404 errors
-        if self.path in ("/favicon.ico", "/favicon.png"):
+        # Gracefully handle browser favicon and DevTools probes without 404 clutter
+        if self.path in ("/favicon.ico", "/favicon.png") or self.path.startswith("/.well-known/"):
             self.send_response(204)
             self.end_headers()
             return

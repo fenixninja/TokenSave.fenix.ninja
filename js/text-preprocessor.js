@@ -71,6 +71,19 @@ export function formatCleanState(state) {
         return cleanRawText(effective.text);
     }
 
+    if (effective.events && Array.isArray(effective.events)) {
+        const eventsSummary = effective.events.map(e => {
+            if (e.type === "customer_message") return `Customer: "${e.text}"`;
+            if (e.type === "tool_call") {
+                const argStr = e.args ? JSON.stringify(e.args) : "";
+                const resStr = e.result ? JSON.stringify(e.result) : "";
+                return `Action: call tool ${e.tool}(${argStr}) -> ${resStr}`;
+            }
+            return cleanRawText(JSON.stringify(e));
+        }).join("\n");
+        return `Agent Goal: ${effective.goal || ""}\nAgent: ${effective.agent || ""}\nTrace Events:\n${eventsSummary}\nFinal Output: ${effective.final_message || ""}`;
+    }
+
     const parts = [];
     for (const [k, v] of Object.entries(effective)) {
         if (IGNORED_STATE_KEYS.has(k)) continue;

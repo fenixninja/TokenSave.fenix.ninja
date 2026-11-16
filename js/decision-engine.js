@@ -218,7 +218,11 @@ export async function evaluateSystemOne(state, questions, rawEmbedFn) {
 
         promptBatch.push(mainPrompt);
 
-        if (clauses.hasPivot && geom.domain !== "boolq") {
+        // #36 & #37: Adversative connector splitting is only applied to short review texts (<600 chars)
+        // to prevent triplicating prompts on long documents/traces and overwhelming WebAssembly memory
+        const shouldSplitAdversative = clauses.hasPivot && geom.domain !== "boolq" && stateForQuery.length < 600;
+
+        if (shouldSplitAdversative) {
             promptBatch.push(formatQwenQuery(instText, clauses.tail));
             promptBatch.push(formatQwenQuery(instText, clauses.head));
         }
@@ -228,7 +232,7 @@ export async function evaluateSystemOne(state, questions, rawEmbedFn) {
             qDef,
             geom,
             startIndex,
-            hasPivot: clauses.hasPivot && geom.domain !== "boolq",
+            hasPivot: shouldSplitAdversative,
             salientSnippet: (geom.domain === "boolq" && cleanState.length > 550) ? stateForQuery : null
         });
     }
