@@ -492,6 +492,49 @@ async function loadRlcdLocal(autoRun = false) {
     showToast("Inicializando Fenix Vector & POMDP local...", "info");
 
     const tStartLoad = performance.now();
+    let compileTimer = null;
+    let compileStart = null;
+    const ESTIMATED_COMPILE_SECS = 14;
+
+    const startCompileCountdown = () => {
+        if (compileTimer) return;
+        compileStart = performance.now();
+        if (el.modalProgressFill) {
+            el.modalProgressFill.style.width = "100%";
+            el.modalProgressFill.classList.add("compiling");
+        }
+        const updateTick = () => {
+            const elapsed = (performance.now() - compileStart) / 1000;
+            const remaining = Math.max(0, Math.ceil(ESTIMATED_COMPILE_SECS - elapsed));
+            if (remaining > 0) {
+                if (el.modalProgressText) {
+                    el.modalProgressText.textContent = `Compilando sesión ONNX en CPU (~${remaining}s restantes)...`;
+                }
+                el.rlcdBtnText.textContent = `Compilando (~${remaining}s)`;
+                if (el.modalBtnConfirmText) el.modalBtnConfirmText.textContent = `Compilando (~${remaining}s)`;
+            } else {
+                const totalSec = Math.round(elapsed);
+                if (el.modalProgressText) {
+                    el.modalProgressText.textContent = `Finalizando inicialización ONNX (${totalSec}s)...`;
+                }
+                el.rlcdBtnText.textContent = "Finalizando...";
+                if (el.modalBtnConfirmText) el.modalBtnConfirmText.textContent = "Finalizando...";
+            }
+        };
+        updateTick();
+        compileTimer = setInterval(updateTick, 1000);
+    };
+
+    const stopCompileCountdown = () => {
+        if (compileTimer) {
+            clearInterval(compileTimer);
+            compileTimer = null;
+        }
+        if (el.modalProgressFill) {
+            el.modalProgressFill.classList.remove("compiling");
+        }
+    };
+
     try {
         await getEmbeddingModel((info) => {
             if (info.status === "initiate") {
@@ -504,17 +547,14 @@ async function loadRlcdLocal(autoRun = false) {
                     if (el.modalProgressFill) el.modalProgressFill.style.width = `${pct}%`;
                     if (el.modalProgressText) el.modalProgressText.textContent = `Descargando ${info.file || "modelo"}... ${pct}%`;
                 } else {
-                    if (el.modalProgressFill) el.modalProgressFill.style.width = `100%`;
-                    el.rlcdBtnText.textContent = "Compilando ONNX...";
-                    if (el.modalProgressText) el.modalProgressText.textContent = "Descarga 100% completada. Compilando sesion ONNX en CPU...";
-                    if (el.modalBtnConfirmText) el.modalBtnConfirmText.textContent = "Compilando...";
+                    startCompileCountdown();
                 }
             } else if (info.status === "done") {
-                if (el.modalProgressFill) el.modalProgressFill.style.width = `100%`;
-                el.rlcdBtnText.textContent = "Compilando...";
-                if (el.modalProgressText) el.modalProgressText.textContent = "Compilando sesion ONNX en memoria CPU... Por favor, espera.";
+                startCompileCountdown();
             }
         });
+
+        stopCompileCountdown();
 
         const elapsedSec = ((performance.now() - tStartLoad) / 1000).toFixed(1);
         console.log(`[App] ¡Modelo cargado y compilado con exito en ${elapsedSec}s! Cerrando modal...`);
@@ -537,6 +577,7 @@ async function loadRlcdLocal(autoRun = false) {
             await runInference();
         }
     } catch (err) {
+        stopCompileCountdown();
         console.error("[App] Error critico al inicializar POMDP:", err);
         appState.modelLoading = false;
         el.rlcdStatusIndicator.className = "model-status-indicator";

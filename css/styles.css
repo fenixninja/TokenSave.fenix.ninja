@@ -1560,6 +1560,18 @@ html, body {
   transition: width 200ms ease;
 }
 
+.progress-fill.compiling {
+  background: linear-gradient(90deg, #6366f1 0%, #06b6d4 50%, #10b981 100%);
+  background-size: 200% 100%;
+  animation: compilePulse 1.4s ease-in-out infinite;
+}
+
+@keyframes compilePulse {
+  0% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
+  100% { background-position: 0% 50%; }
+}
+
 .progress-text {
   font-size: 11px;
   color: var(--text-muted);
