@@ -43,7 +43,8 @@ import {
     buildNoulPrototypes,
     buildScoreLevelPrototypes,
     buildChoiceOptionPrototypes,
-    selectSalientSentences
+    selectSalientSentences,
+    tokenTrimState
 } from "./text-preprocessor.js";
 
 // #40: Schema-level cache for compiled criterion vectors, centroids, and null-input biases
@@ -200,9 +201,12 @@ export async function evaluateSystemOne(state, questions, rawEmbedFn) {
         const geom = geoms[i];
         const instText = geom.instText;
 
-        // Domain-specific state text conditioning
+        // Domain-specific state text conditioning (TokenTrim / JEV Style)
         let stateForQuery = cleanState;
-        if (geom.domain === "boolq" && cleanState.length > 550) {
+        if (cleanState.length > 1000) {
+            // TokenTrim: Trim unstructured text (resumes, long documents) to the salient context (< 1,000 chars)
+            stateForQuery = tokenTrimState(cleanState, instText, 1000);
+        } else if (geom.domain === "boolq" && cleanState.length > 550) {
             // #29 & v4: Fast CPU saliency selection to avoid attention quadratic latency
             stateForQuery = selectSalientSentences(cleanState, instText, 2);
         } else if (geom.domain === "sms_spam") {

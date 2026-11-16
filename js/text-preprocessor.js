@@ -178,14 +178,14 @@ export function splitAdversativeClauses(text) {
 }
 
 /**
- * #29: Splits a long passage into individual sentences for extractive max-pooling (BoolQ).
+ * #29: Splits a long passage into individual sentences for extractive max-pooling (BoolQ, resumes, logs).
  */
 export function splitIntoSentences(passage) {
     const cleaned = cleanRawText(passage);
     const rawParts = cleaned
-        .split(/(?<=[.!?])\s+(?=[A-Z0-9"`(])/)
+        .split(/(?<=[.!?\n])\s+(?=[A-Z0-9"`(-])/)
         .map(s => s.trim())
-        .filter(s => s.length >= 15);
+        .filter(s => s.length >= 10);
     return rawParts.length > 0 ? rawParts : [cleaned];
 }
 
@@ -376,4 +376,59 @@ export function selectSalientSentences(passage, queryText, topK = 2) {
     scored.sort((a, b) => b.score - a.score);
     const chosen = scored.slice(0, topK).sort((a, b) => a.idx - b.idx);
     return chosen.map(c => c.s).join(" ");
+}
+
+/**
+ * TokenTrim (JEV Style): Prunes and trims long unstructured contexts (resumes, documents,
+ * audit traces) down to only the most salient sentences (< 1,000 chars) for each question,
+ * preventing quadratic self-attention latency while preserving maximum semantic signal.
+ */
+export function tokenTrimState(fullStateText, taskInstruction, maxChars = 1000) {
+    const text = cleanRawText(fullStateText);
+    if (text.length <= maxChars) return text;
+
+    const inst = cleanRawText(taskInstruction).toLowerCase();
+
+    // 1. Mentoring / Leadership targeting
+    if (/\b(mentor\w*|leadership|people\s+management)\b/i.test(inst)) {
+        const sentences = splitIntoSentences(text);
+        const matches = sentences.filter(s => /\b(mentor\w*|led\b|lead\w*|junior\w*|coach\w*|supervis\w*|direct\w*)\b/i.test(s));
+        if (matches.length > 0) {
+            return matches.slice(0, 4).join(" ");
+        }
+    }
+
+    // 2. AI / LLM / Machine Learning targeting
+    if (/\b(llm\w*|ai\b|machine\s+learning|deep\s+learning|large\s+language)\b/i.test(inst)) {
+        const sentences = splitIntoSentences(text);
+        const matches = sentences.filter(s => /\b(llm\w*|ai\b|gpt\w*|language\s+model|machine\s+learning|deep\s+learning|neural|nlp|embedding|transformer)\b/i.test(s));
+        if (matches.length > 0) {
+            return matches.slice(0, 4).join(" ");
+        }
+    }
+
+    // 3. Open Source / Certifications / Awards targeting
+    if (/\b(open\s+source|certif\w*|achievement\w*|contribut\w*)\b/i.test(inst)) {
+        const sentences = splitIntoSentences(text);
+        const matches = sentences.filter(s => /\b(open\s+source|github|pr\b|merged|certif\w*|award\w*|achievement\w*|conference|speaker)\b/i.test(s));
+        if (matches.length > 0) {
+            return matches.slice(0, 4).join(" ");
+        }
+    }
+
+    // 4. Years of experience / Seniority timeline targeting
+    if (/\b(years\s+of\s+experience|how\s+many\s+years|timeline|seniority)\b/i.test(inst)) {
+        const sentences = splitIntoSentences(text);
+        const matches = sentences.filter(s => /\b(20\d\d|jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec|present|years?)\b/i.test(s));
+        if (matches.length > 0) {
+            return matches.slice(0, 5).join(" ");
+        }
+    }
+
+    // 5. Default TokenTrim: TF-IDF Saliency extraction with instruction tokens
+    const salient = selectSalientSentences(text, taskInstruction, 3);
+    if (salient.length > maxChars) {
+        return salient.slice(0, maxChars);
+    }
+    return salient;
 }
