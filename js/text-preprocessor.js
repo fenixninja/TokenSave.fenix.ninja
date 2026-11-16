@@ -276,23 +276,23 @@ export function buildScoreLevelPrototypes(instText, rawLevels) {
     const instLow = String(instText || "").toLowerCase();
     const k = rawLevels.length;
 
-    if (k === 5 && (instLow.includes("stars") || instLow.includes("product review"))) {
+    if (k === 5 && (instLow.includes("stars") || instLow.includes("product review") || instLow.includes("customer satisfaction"))) {
         return [
-            "1 star rating (terrible, awful, broken, useless junk, waste of money, defective, worst quality, returned immediately, completely disappointed)",
-            "2 stars rating (poor, disappointing, flimsy, stopped working soon, subpar quality, annoying flaws, not recommended, dissatisfied)",
-            "3 stars rating (average, okay, mixed feelings, decent but has some pros and cons, mediocre, acceptable but nothing special)",
-            "4 stars rating (good quality, works well, happy with purchase, nice product with minor caveat, satisfied)",
-            "5 stars rating (excellent, amazing, perfect, love it, best purchase, outstanding quality, works flawlessly, highly recommend)"
+            "[1/5 - TOTAL REJECTION / DEFECTIVE]: Completely broken, useless, scam, or arrived damaged. Buyer feels cheated, wasted money, demands a refund, and warns everyone to stay away.",
+            "[2/5 - MAJOR FLAWS / REGRET]: Works poorly, cheap flimsy materials, missing key functions, or broke quickly. Frustrating experience; buyer regrets the purchase and would not buy again.",
+            "[3/5 - MEDIOCRE / MIXED COMPROMISE]: Average, functional enough for the low price, has noticeable drawbacks balanced by a few decent points. Buyer feels indifferent or lukewarm.",
+            "[4/5 - SOLID / SATISFIED]: Reliable, performs as advertised, sturdy build, happy with the purchase. Only has minor nitpicks or small room for improvement; worth buying.",
+            "[5/5 - FLAWLESS / ENTHUSIASTIC PRAISE]: Exceeded expectations, phenomenal craftsmanship, life-changing or essential item. Buyer is thrilled, loves everything about it, and strongly recommends it."
         ];
     }
 
-    if (k === 5 && instLow.includes("movie review")) {
+    if (k === 5 && (instLow.includes("movie review") || instLow.includes("sentiment polarity"))) {
         return [
-            "0 very negative movie review: awful, dreadful, unwatchable,gob of drivel, miserable, lifeless, worst, boring, complete waste of time",
-            "1 negative movie review: dull, Mediocre, flawed, uninspired, slow, lacks wit, disappointing, tedious, doesn't work",
-            "2 neutral or mixed movie review: mixed bag, some good performances but let down by script, average, neither great nor terrible",
-            "3 positive movie review: good, enjoyable, well-acted, engaging, fine acting, entertaining, thoughtful, solid film",
-            "4 very positive movie review: masterpiece, brilliant, tour-de-force, enthralling, hilarious, unforgettable, best cinema"
+            "[1/5 - VISCERAL DISGUST / UNWATCHABLE]: Pure garbage, insulting, painful to sit through, zero redeeming qualities. An unmitigated disaster, boring slog, or offensive failure.",
+            "[2/5 - WEAK / UNINSPIRED]: Cliché, predictable, flat characters, dull pacing, or missed potential. Leaves the viewer cold, unimpressed, or mildly annoyed despite minor effort.",
+            "[3/5 - AMBIVALENT / FORGETTABLE]: Strictly neutral, uneven, half-baked, or purely factual observation without clear praise or condemnation. Passable filler with equal strengths and weaknesses.",
+            "[4/5 - ENGAGING / WELL-CRAFTED]: Smart, entertaining, charming, strong performances, or emotionally resonant. A genuinely enjoyable and worthwhile watch with slight imperfections.",
+            "[5/5 - MASTERPIECE / TRIUMPH]: Brilliant, breathtaking, hilarious, deeply moving, or unforgettable tour de force. Exhilarating filmmaking worthy of universal acclaim."
         ];
     }
 
@@ -318,15 +318,15 @@ export function buildChoiceOptionPrototypes(instText, criteriaMap) {
         };
     }
 
-    // Disambiguate 6-class Emotion dataset
+    // Disambiguate 6-class Emotion dataset with strict contrastive boundaries
     if (keySet.has("sadness") && keySet.has("joy") && keySet.has("love") && keySet.has("anger") && keySet.has("fear") && keySet.has("surprise")) {
         return {
-            sadness: "Sadness, grief, depressed, heartbroken, gloomy, crying, humiliated, hopeless, lonely, jaded, and devastated",
-            joy: "Joy, happiness, glad, excited, invigorated, lucky, thankful, pleased, cheerful, optimistic, and enjoying life",
-            love: "Love, romantic affection, caring, sweet, tender, devoted, fond, supportive, and emotionally attached to someone",
-            anger: "Anger, furious, irritated, mad, grumpy, disgusted, agitated, resentful, envious, bitchy, and insulted",
-            fear: "Fear, anxious, scared, nervous, terrified, insecure, vulnerable, pressured, shaken, uncertain, and worried",
-            surprise: "Surprise, shocked, amazed, astonished, stunned, weird unexpected feeling, and bewildered"
+            sadness: "Sadness: grief, bereavement, heartbroken, crying alone, gloomy sorrow, hopeless, lonely, jaded, devastated by loss",
+            joy: "Joy: blissful happiness, elated, celebrating triumph, delight, thriving, cheerful ecstatic fun, enjoying life",
+            love: "Love: romantic affection, deep tenderness, adoration, caring, devoted passion, sweet warmth towards someone",
+            anger: "Anger: furious, rage, outraged, irritated, hostile, mad, resentful, bitter spite, insulted, pissed off",
+            fear: "Fear: panic, terrified, trembling, dread, imminent danger, phobia, scared of harm or horror, trembling",
+            surprise: "Surprise: sudden unexpected astonishment, shocked, bewildered, stunned disbelief, amazed marvel, caught off guard"
         };
     }
 

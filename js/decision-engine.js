@@ -235,9 +235,10 @@ export async function evaluateSystemOne(state, questions, rawEmbedFn) {
             // #2: Polar Axis Projection (projects state onto extreme-high minus extreme-low axis)
             const polar = projectPolarAxis(stateVec, geom.centeredLevelVecs, geom.nullVec);
 
-            // #13 & #17: Combine debiased similarity with Z-score scaled softmax
+            // #13 & #17: Score softmax with low temperature (0.05) to prevent mid-level flattening
             const zSims = zScoreNormalize(debiasedSims);
-            const probs = softmax(zSims, 0.65);
+            const scoreTemp = (geom.domain === "amazon" || geom.domain === "sst5") ? 0.05 : 0.065;
+            const probs = softmax(debiasedSims, scoreTemp);
             const scoreMetrics = calculateScoreValue(probs);
 
             // #14 & #15: Stretch midpoint shrinkage and blend with polar axis projection
