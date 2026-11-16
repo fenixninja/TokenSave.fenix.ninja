@@ -403,7 +403,7 @@ async function main() {
 
     let limit = 5;
     let tasks = null;
-    let runName = "tokensafe-remaster-v4/qwen3-embedding-0.6b";
+    let runName = "tokensafe-remaster-v4.1/qwen3-embedding-0.6b";
     let explainFailures = false;
 
     for (let i = 0; i < args.length; i++) {
@@ -429,7 +429,7 @@ async function main() {
 
     console.log(`Cargando modelo ${MODEL_ID} (q4f16, 4 hilos CPU)...`);
     await getRemasterModel();
-    console.log(`✔ Modelo listo. Evaluando ${items.length} pruebas con motor v4 (umbrales calibrados + edge stretching + leyendas)...`);
+    console.log(`✔ Modelo listo. Evaluando ${items.length} pruebas con motor v4.1 (Amazon contrastivo + BoolQ th=0.59)...`);
 
     const rows = [];
     for (let i = 0; i < items.length; i++) {
@@ -497,11 +497,12 @@ async function main() {
     writeRows(rows);
     quickSummary(rows);
 
-    // Si existen corridas anteriores en accuracy.jsonl, mostrar la comparativa automática (v2 vs v3 o base vs v3)
+    // Si existen corridas anteriores en accuracy.jsonl, mostrar la comparativa automática (v4 vs v4.1, o v2 vs v4.1)
     if (fs.existsSync(RESULTS_FILE)) {
         const allSaved = fs.readFileSync(RESULTS_FILE, "utf8").split("\n").filter(l => l.trim()).map(l => JSON.parse(l));
+        const hasV4 = allSaved.some(r => r.run === "tokensafe-remaster-v4/qwen3-embedding-0.6b");
         const hasV2 = allSaved.some(r => r.run === "tokensafe-remaster-v2/qwen3-embedding-0.6b");
-        const baselineToCompare = hasV2 ? "tokensafe-remaster-v2/qwen3-embedding-0.6b" : "tokensafe-remaster/qwen3-embedding-0.6b";
+        const baselineToCompare = hasV4 ? "tokensafe-remaster-v4/qwen3-embedding-0.6b" : (hasV2 ? "tokensafe-remaster-v2/qwen3-embedding-0.6b" : "tokensafe-remaster/qwen3-embedding-0.6b");
         if (runName !== baselineToCompare) {
             compareRuns(allSaved, baselineToCompare, runName);
         }

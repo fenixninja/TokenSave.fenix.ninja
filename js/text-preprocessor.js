@@ -255,7 +255,7 @@ export function buildNoulPrototypes(instText, criteriaObj = null) {
     const declarativeCore = inst.replace(/^(is|are|was|were|can|could|do|does|did|has|have|had|will|would|should)\s+/i, "").replace(/\?+$/, "");
     return {
         domain: "boolq",
-        recommendedThreshold: 0.56,
+        recommendedThreshold: 0.59,
         taskPriorShift: 0.85,
         trueTexts: [
             `Yes, the passage affirms or confirms: ${declarativeCore}.`,
@@ -278,9 +278,9 @@ export function buildScoreLevelPrototypes(instText, rawLevels) {
 
     if (k === 5 && (instLow.includes("stars") || instLow.includes("product review") || instLow.includes("customer satisfaction"))) {
         return [
-            "[1/5 - TOTAL REJECTION / DEFECTIVE]: Completely broken, useless, scam, or arrived damaged. Buyer feels cheated, wasted money, demands a refund, and warns everyone to stay away.",
-            "[2/5 - MAJOR FLAWS / REGRET]: Works poorly, cheap flimsy materials, missing key functions, or broke quickly. Frustrating experience; buyer regrets the purchase and would not buy again.",
-            "[3/5 - MEDIOCRE / MIXED COMPROMISE]: Average, functional enough for the low price, has noticeable drawbacks balanced by a few decent points. Buyer feels indifferent or lukewarm.",
+            "[1/5 - DEFECTIVE / FAILED / REGRET]: Completely broken, useless, defective, missing parts, cheap flimsy materials, or broke quickly. Terrible experience, buyer deeply regrets purchasing, wasted money, and warns everyone not to buy.",
+            "[2/5 - POOR WITH REDEEMING QUALITIES]: Has a decent idea, nice look, or minor working feature, but severely undermined by major flaws, poor quality, or frustrating limitations. Disappointing overall but not a complete 1-star disaster.",
+            "[3/5 - MEDIOCRE / AVERAGE COMPROMISE]: Strictly average, functional enough for the price, balances some pros and cons. Neutral or lukewarm feeling with neither strong praise nor condemnation.",
             "[4/5 - SOLID / SATISFIED]: Reliable, performs as advertised, sturdy build, happy with the purchase. Only has minor nitpicks or small room for improvement; worth buying.",
             "[5/5 - FLAWLESS / ENTHUSIASTIC PRAISE]: Exceeded expectations, phenomenal craftsmanship, life-changing or essential item. Buyer is thrilled, loves everything about it, and strongly recommends it."
         ];
