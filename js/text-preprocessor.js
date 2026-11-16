@@ -193,9 +193,11 @@ export function buildNoulPrototypes(instText, criteriaObj = null) {
     const instLow = inst.toLowerCase();
 
     // Specialized high-separation prototypes for known semantic domains
-    if (instLow.includes("movie review") && instLow.includes("positive")) {
+    if (instLow.includes("movie review") || instLow.includes("sentiment") || (instLow.includes("positive") && instLow.includes("negative"))) {
         return {
-            domain: "sentiment_binary",
+            domain: "sst2",
+            recommendedThreshold: 0.85,
+            taskPriorShift: 1.50,
             trueTexts: [
                 "Positive movie review: an enjoyable, charming, funny, intelligent, moving, thrilling, well-acted, solid and worthwhile film.",
                 "Praise and recommendation: smart, entertaining, heartwarming, fascinating, brilliant cinema that succeeds."
@@ -210,6 +212,8 @@ export function buildNoulPrototypes(instText, criteriaObj = null) {
     if (instLow.includes("spam")) {
         return {
             domain: "sms_spam",
+            recommendedThreshold: 0.75,
+            taskPriorShift: 1.10,
             trueTexts: [
                 "Spam SMS advertisement: urgent prize winner, claim £1000 free cash or holiday, text code to shortcode, call 0800/0906, ringtone or dating scam.",
                 "Unsolicited commercial marketing promotion, subscription alert, or promotional offer."
@@ -224,6 +228,8 @@ export function buildNoulPrototypes(instText, criteriaObj = null) {
     if (instLow.includes("ironic") || instLow.includes("sarcastic")) {
         return {
             domain: "irony",
+            recommendedThreshold: 0.90,
+            taskPriorShift: 1.85,
             trueTexts: [
                 "Ironic or sarcastic tweet: the writer mocks a frustrating situation by saying the opposite of what they mean, using #irony, #sarcasm, #not, or bitter humor.",
                 "Sarcastic complaint pretending that something annoying or bad is wonderful."
@@ -238,6 +244,8 @@ export function buildNoulPrototypes(instText, criteriaObj = null) {
     if (criteriaObj && typeof criteriaObj === "object" && (criteriaObj.true || criteriaObj.false)) {
         return {
             domain: "custom_noul",
+            recommendedThreshold: 0.50,
+            taskPriorShift: 0.0,
             trueTexts: [cleanRawText(criteriaObj.true || `Yes, true: ${inst}`)],
             falseTexts: [cleanRawText(criteriaObj.false || `No, false: ${inst}`)]
         };
@@ -247,13 +255,15 @@ export function buildNoulPrototypes(instText, criteriaObj = null) {
     const declarativeCore = inst.replace(/^(is|are|was|were|can|could|do|does|did|has|have|had|will|would|should)\s+/i, "").replace(/\?+$/, "");
     return {
         domain: "boolq",
+        recommendedThreshold: 0.70,
+        taskPriorShift: 0.85,
         trueTexts: [
-            `Yes, it is true and confirmed that ${declarativeCore}.`,
-            `${inst} Yes, affirmative.`
+            `Yes, the passage affirms or confirms: ${declarativeCore}.`,
+            `${inst} Yes, affirmative and confirmed by evidence.`
         ],
         falseTexts: [
-            `No, it is false, untrue, illegal, or not the case that ${declarativeCore}.`,
-            `${inst} No, negative, never, cannot.`
+            `No, the passage contradicts, denies, or refutes: ${declarativeCore}.`,
+            `${inst} No, false, unmentioned, or never happened.`
         ]
     };
 }
@@ -325,4 +335,32 @@ export function buildChoiceOptionPrototypes(instText, criteriaMap) {
         result[k] = desc ? `${k}: ${cleanRawText(desc)}` : cleanRawText(k);
     }
     return result;
+}
+
+/**
+ * Fast CPU-based keyword saliency selection to pick the 1-2 most informative sentences
+ * from long reading comprehension passages (e.g. BoolQ) without calling the embedding model.
+ */
+export function selectSalientSentences(passage, queryText, topK = 2) {
+    const sentences = splitIntoSentences(passage);
+    if (sentences.length <= topK) return sentences.join(" ");
+
+    const queryTokens = new Set(
+        cleanRawText(queryText).toLowerCase().split(/[^a-z0-9]+/).filter(w => w.length > 2 && !/^(the|and|for|that|with|this|from|are|was|were|can|does|did|will|would)\b/.test(w))
+    );
+
+    const scored = sentences.map((s, idx) => {
+        const sTokens = s.toLowerCase().split(/[^a-z0-9]+/);
+        let overlap = 0;
+        for (const tok of sTokens) {
+            if (queryTokens.has(tok)) overlap++;
+        }
+        // Topic bonus for first sentence
+        const score = overlap + (idx === 0 ? 0.35 : 0);
+        return { s, score, idx };
+    });
+
+    scored.sort((a, b) => b.score - a.score);
+    const chosen = scored.slice(0, topK).sort((a, b) => a.idx - b.idx);
+    return chosen.map(c => c.s).join(" ");
 }

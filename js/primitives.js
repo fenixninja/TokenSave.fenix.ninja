@@ -556,10 +556,12 @@ export function calculateNoulBayesian(simPos, simNeg = null, temperature = 0.08,
         ? (options.nullPos - options.nullNeg) * (options.nullWeight ?? 0.85)
         : 0;
     const plattAlpha = options.plattAlpha ?? 1.0;
-    const plattBeta = options.plattBeta ?? 0.0;
+    const plattBeta = (options.plattBeta ?? 0.0) - (options.taskPriorShift ?? 0.0);
     const boost = options.boost ?? 0.0;
     const costRatio = options.costRatioFpFn ?? 1.0;
-    const threshold = costRatio / (1.0 + costRatio);
+    const threshold = options.threshold !== undefined && options.threshold !== null
+        ? Number(options.threshold)
+        : costRatio / (1.0 + costRatio);
 
     if (simNeg !== null && typeof simNeg === "number") {
         marginDelta = (simPos - simNeg) - nullBias + boost;

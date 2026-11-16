@@ -42,7 +42,8 @@ import {
     formatQwenQuery,
     buildNoulPrototypes,
     buildScoreLevelPrototypes,
-    buildChoiceOptionPrototypes
+    buildChoiceOptionPrototypes,
+    selectSalientSentences
 } from "./text-preprocessor.js";
 
 // #40: Schema-level cache for compiled criterion vectors, centroids, and null-input biases
@@ -157,6 +158,8 @@ async function compileQuestionGeometry(qKey, qDef, rawEmbedFn) {
     const compiled = {
         type: "noul",
         domain: proto.domain,
+        recommendedThreshold: proto.recommendedThreshold ?? 0.50,
+        taskPriorShift: proto.taskPriorShift ?? 0.0,
         instText,
         orthoTrue,
         orthoFalse,
@@ -239,19 +242,25 @@ export async function evaluateSystemOne(state, questions, rawEmbedFn) {
 
             // #14 & #15: Stretch midpoint shrinkage and blend with polar axis projection
             const stretched = stretchScoreExtremes(scoreMetrics.expectedScore, k - 1, probs, 1.75);
+            
+            // Mode argmax blending: resolves extreme compression in 1-5 ratings (Amazon & SST-5)
+            const argmaxLevel = probs.indexOf(Math.max(...probs));
+            const alphaMode = qDef.alphaMode !== undefined ? Number(qDef.alphaMode) : 0.35;
+            const blendedScore = alphaMode * argmaxLevel + (1 - alphaMode) * (0.50 * stretched + 0.50 * polar.axisScore);
             const finalScore = Number(
-                Math.max(0, Math.min(k - 1, 0.55 * stretched + 0.45 * polar.axisScore)).toFixed(3)
+                Math.max(0, Math.min(k - 1, blendedScore)).toFixed(3)
             );
 
             const legend = Object.fromEntries(geom.rawLabels.map((c, i) => [String(i), c]));
             answers[qKey] = {
                 type: "score",
                 score: finalScore,
+                argmaxLevel,
                 confidence: Number((0.45 + (1 - scoreMetrics.variance / Math.max(1, k - 1)) * 0.45).toFixed(4)),
                 legend,
                 probabilities: Object.fromEntries(geom.rawLabels.map((_, i) => [String(i), Number(probs[i].toFixed(4))]))
             };
-            diagnostics[qKey] = { rawSims, debiasedSims, polarAxisScore: polar.axisScore, stretched };
+            diagnostics[qKey] = { rawSims, debiasedSims, polarAxisScore: polar.axisScore, stretched, argmaxLevel };
 
         } else {
             // Noul (boolean)
@@ -273,29 +282,21 @@ export async function evaluateSystemOne(state, questions, rawEmbedFn) {
                 }
             }
 
-            // #29: Sentence-level extractive max-pooling for long reading comprehension passages (BoolQ)
-            if (geom.domain === "boolq" && cleanState.length > 160) {
-                const sentences = splitIntoSentences(cleanState);
-                if (sentences.length > 1) {
-                    const sentVecs = await rawEmbedFn([
-                        formatQwenQuery("Find the sentence that answers the question", instText),
-                        ...sentences.map(s => formatQwenQuery(instText, s))
-                    ]);
-                    const qVec = sentVecs[0];
-                    const sVecs = sentVecs.slice(1);
-                    const simsToQ = sVecs.map(sv => cosineSimilarityRaw(qVec, sv));
-                    const bestIdx = simsToQ.indexOf(Math.max(...simsToQ));
-                    effectiveVec = blendVectors(sVecs[bestIdx], stateVec, 0.70, 0.30);
+            // #29: High-speed salient sentence selection for long reading comprehension passages (BoolQ)
+            // Uses CPU keyword saliency (0ms overhead) to select the 2 most informative sentences
+            // instead of calling the slow ONNX embedding model for every sentence in the passage.
+            if (geom.domain === "boolq" && cleanState.length > 140) {
+                const salientSnippet = selectSalientSentences(cleanState, instText, 2);
+                const queryPrompt = formatQwenQuery(`Given the passage, verify if: ${instText}`, salientSnippet);
+                const [salientVec] = await rawEmbedFn([queryPrompt]);
+                effectiveVec = blendVectors(salientVec, stateVec, 0.65, 0.35);
 
-                    // Check explicit negation mismatch between best sentence and question
-                    const bestSentLower = sentences[bestIdx].toLowerCase();
-                    const qHasNeg = /\b(not|never|no|cannot|can't|illegal)\b/i.test(instText);
-                    const sHasNeg = /\b(not|never|cannot|can't|illegal|except|distinct\s+from|unlisted|fictional|no\s+longer|without)\b/i.test(bestSentLower);
-                    if (sHasNeg && !qHasNeg) {
-                        extraBoost -= 0.035;
-                    } else if (!sHasNeg && !qHasNeg && simsToQ[bestIdx] > 0.68) {
-                        extraBoost += 0.025;
-                    }
+                const qHasNeg = /\b(not|never|no|cannot|can't|illegal)\b/i.test(instText);
+                const sHasNeg = /\b(not|never|cannot|can't|illegal|except|distinct\s+from|unlisted|fictional|no\s+longer|without)\b/i.test(salientSnippet.toLowerCase());
+                if (sHasNeg && !qHasNeg) {
+                    extraBoost -= 0.035;
+                } else if (!sHasNeg && !qHasNeg) {
+                    extraBoost += 0.025;
                 }
             }
 
@@ -306,12 +307,18 @@ export async function evaluateSystemOne(state, questions, rawEmbedFn) {
             const simPos = cosineSimilarityRaw(effectiveVec, geom.orthoTrue);
             const simNeg = cosineSimilarityRaw(effectiveVec, geom.orthoFalse);
 
-            // #16: Null-Input Baseline subtraction + Bayesian log-odds calibration
+            const userTh = qDef.threshold !== undefined && qDef.threshold !== null ? Number(qDef.threshold) : null;
+            const effectiveThreshold = userTh ?? geom.recommendedThreshold ?? 0.50;
+            const effectivePriorShift = geom.taskPriorShift ?? 0.0;
+
+            // #16 & #47: Null-Input Baseline subtraction + Bayesian log-odds calibration + task-specific prior thresholding
             const bayesian = calculateNoulBayesian(simPos, simNeg, 0.055, {
                 nullPos: geom.nullPos,
                 nullNeg: geom.nullNeg,
                 nullWeight: 0.90,
-                boost: extraBoost
+                boost: extraBoost,
+                threshold: effectiveThreshold,
+                taskPriorShift: effectivePriorShift
             });
 
             answers[qKey] = {
@@ -320,6 +327,8 @@ export async function evaluateSystemOne(state, questions, rawEmbedFn) {
                 probability: bayesian.probability,
                 isYes: bayesian.isYes,
                 isTrue: bayesian.isTrue,
+                decision: bayesian.isTrue,
+                threshold: bayesian.threshold,
                 logOdds: bayesian.logOdds
             };
             diagnostics[qKey] = { simPos, simNeg, nullPos: geom.nullPos, nullNeg: geom.nullNeg, extraBoost, bayesian };

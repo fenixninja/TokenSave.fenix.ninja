@@ -4,6 +4,8 @@
  */
 
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import path from "node:path";
 import {
     softmax,
     calculateChoiceConfidence,
@@ -137,9 +139,38 @@ async function runSystemOneIntegrationTests() {
     console.log("✅ TODOS LOS TESTS DE TOKENSAFE REMASTER PASARON CORRECTAMENTE.");
 }
 
+async function runAllCaseExamples() {
+    const caseDir = path.resolve("case-use-examples");
+    if (!fs.existsSync(caseDir)) return;
+    const cats = fs.readdirSync(caseDir).filter(c => fs.statSync(path.join(caseDir, c)).isDirectory());
+    console.log(`\n=== 3. Evaluando casos de uso de case-use-examples/ (${cats.length} categorías) ===\n`);
+    let count = 0;
+    for (const cat of cats) {
+        const catPath = path.join(caseDir, cat);
+        const subdirs = fs.readdirSync(catPath).filter(s => fs.statSync(path.join(catPath, s)).isDirectory());
+        for (const sub of subdirs) {
+            const sPath = path.join(catPath, sub, "state.json");
+            const qPath = path.join(catPath, sub, "query.json");
+            if (fs.existsSync(sPath) && fs.existsSync(qPath)) {
+                count++;
+                const st = JSON.parse(fs.readFileSync(sPath, "utf8"));
+                const qy = JSON.parse(fs.readFileSync(qPath, "utf8"));
+                const t0 = performance.now();
+                const res = await systemOneRemaster(st, qy);
+                const dt = performance.now() - t0;
+                console.log(`  [${count}] [${cat}/${sub}] ✔ OK (${dt.toFixed(0)} ms) -> ${Object.keys(res).join(", ")}`);
+            }
+        }
+    }
+    console.log(`\n✔ Evaluados exitosamente ${count} ejemplos reales.`);
+}
+
 async function main() {
     await runUnitTests();
     await runSystemOneIntegrationTests();
+    if (process.argv.includes("--all") || process.argv.includes("--examples")) {
+        await runAllCaseExamples();
+    }
 }
 
 main().catch(err => {

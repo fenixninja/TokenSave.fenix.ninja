@@ -235,7 +235,7 @@ export function taskMetrics(rows) {
     } else {
         const p = rows.map(r => Number(r.answer.noul));
         const y = rows.map(r => Boolean(r.gold));
-        const pred = p.map(x => x >= 0.5);
+        const pred = rows.map(r => r.answer.isTrue !== undefined ? Boolean(r.answer.isTrue) : (Number(r.answer.noul) >= (Number(r.answer.threshold) || 0.5)));
         const correct = pred.map((a, i) => a === y[i]);
         const conf = p.map((x, i) => (pred[i] ? x : 1 - x));
         m.auroc = auroc(p, y);
@@ -402,7 +402,7 @@ async function main() {
 
     let limit = 5;
     let tasks = null;
-    let runName = "tokensafe-remaster-v2/qwen3-embedding-0.6b";
+    let runName = "tokensafe-remaster-v3/qwen3-embedding-0.6b";
     let explainFailures = false;
 
     for (let i = 0; i < args.length; i++) {
@@ -428,7 +428,7 @@ async function main() {
 
     console.log(`Cargando modelo ${MODEL_ID} (q4f16, 4 hilos CPU)...`);
     await getRemasterModel();
-    console.log(`✔ Modelo listo. Evaluando ${items.length} pruebas con motor v2 (50 mejoras)...\n`);
+    console.log(`✔ Modelo listo. Evaluando ${items.length} pruebas con motor v3 (calibración de umbrales + mode blending + BoolQ acelerado)...\n`);
 
     const rows = [];
     for (let i = 0; i < items.length; i++) {
@@ -459,10 +459,11 @@ async function main() {
             predStr = String(ans.choice);
         } else if (it.kind === "score") {
             ok = Math.round(ans.score) === it.gold;
-            predStr = `${ans.score.toFixed(2)} (nivel=${Math.round(ans.score)})`;
+            predStr = `${ans.score.toFixed(2)} (nivel=${Math.round(ans.score)}, am=${ans.argmaxLevel ?? 'N/A'})`;
         } else {
-            ok = (ans.noul >= 0.5) === it.gold;
-            predStr = `${ans.noul >= 0.5} (p=${ans.noul.toFixed(2)})`;
+            const isDecisionTrue = ans.isTrue !== undefined ? Boolean(ans.isTrue) : (ans.noul >= (ans.threshold || 0.5));
+            ok = isDecisionTrue === it.gold;
+            predStr = `${isDecisionTrue} (p=${ans.noul.toFixed(2)}, th=${(ans.threshold ?? 0.5).toFixed(2)})`;
         }
 
         const icono = ok ? "✔ ACIERTO" : "✘ FALLO";
@@ -484,7 +485,7 @@ async function main() {
     const aciertosTot = rows.filter(r =>
         (r.kind === "choice" && r.answer.choice === r.gold) ||
         (r.kind === "score" && Math.round(r.answer.score) === r.gold) ||
-        (r.kind === "noul" && (r.answer.noul >= 0.5) === r.gold)
+        (r.kind === "noul" && (r.answer.isTrue !== undefined ? Boolean(r.answer.isTrue) : (r.answer.noul >= (r.answer.threshold || 0.5))) === r.gold)
     ).length;
     const pctTot = ((aciertosTot / rows.length) * 100).toFixed(1);
 
@@ -494,11 +495,13 @@ async function main() {
     writeRows(rows);
     quickSummary(rows);
 
-    // Si existe la corrida base en accuracy.jsonl, mostrar también la tabla comparativa automáticamente
+    // Si existen corridas anteriores en accuracy.jsonl, mostrar la comparativa automática (v2 vs v3 o base vs v3)
     if (fs.existsSync(RESULTS_FILE)) {
         const allSaved = fs.readFileSync(RESULTS_FILE, "utf8").split("\n").filter(l => l.trim()).map(l => JSON.parse(l));
-        if (allSaved.some(r => r.run === "tokensafe-remaster/qwen3-embedding-0.6b") && runName !== "tokensafe-remaster/qwen3-embedding-0.6b") {
-            compareRuns(allSaved, "tokensafe-remaster/qwen3-embedding-0.6b", runName);
+        const hasV2 = allSaved.some(r => r.run === "tokensafe-remaster-v2/qwen3-embedding-0.6b");
+        const baselineToCompare = hasV2 ? "tokensafe-remaster-v2/qwen3-embedding-0.6b" : "tokensafe-remaster/qwen3-embedding-0.6b";
+        if (runName !== baselineToCompare) {
+            compareRuns(allSaved, baselineToCompare, runName);
         }
     }
 }
