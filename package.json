@@ -6,7 +6,8 @@
   "scripts": {
     "test": "node bench/test_remaster.mjs",
     "bench": "node bench/eval_accuracy.mjs --limit 5",
-    "summarize": "node bench/eval_accuracy.mjs summarize"
+    "summarize": "node bench/eval_accuracy.mjs summarize",
+    "serve": "python3 server.py 3000"
   },
   "dependencies": {
     "@huggingface/transformers": "^3.5.2"

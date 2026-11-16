@@ -121,9 +121,20 @@ export async function getEmbeddingModel(onProgress) {
         }
 
         // 2. Fallback to CPU via WebAssembly (WASM)
-        // Configure WASM multithreading
+        // Check for Cross-Origin Isolation (required by modern browsers for SharedArrayBuffer multithreading)
+        const isIsolated = typeof crossOriginIsolated !== "undefined" && crossOriginIsolated;
+        const targetThreads = isIsolated
+            ? Math.min(4, (typeof navigator !== "undefined" && navigator.hardwareConcurrency) || 2)
+            : 1;
+
         if (env.backends && env.backends.onnx && env.backends.onnx.wasm) {
-            env.backends.onnx.wasm.numThreads = Math.min(4, (typeof navigator !== "undefined" && navigator.hardwareConcurrency) || 2);
+            env.backends.onnx.wasm.numThreads = targetThreads;
+        }
+
+        if (isIsolated) {
+            console.log(`[WASM] Cross-Origin Isolation detectado: Multihilo activo con ${targetThreads} nucleos CPU.`);
+        } else {
+            console.log("[WASM] Modo monohilo activo (crossOriginIsolated inactivo). Para activar multihilo a 4 nucleos, ejecuta: python3 server.py 3000");
         }
 
         try {
