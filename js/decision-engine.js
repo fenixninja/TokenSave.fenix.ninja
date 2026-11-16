@@ -251,10 +251,21 @@ export async function evaluateSystemOne(state, questions, rawEmbedFn) {
                 Math.max(0, Math.min(k - 1, blendedScore)).toFixed(3)
             );
 
+            // Discretized level with edge-stretching (0.65 window on extremes)
+            const minLevel = 0;
+            const maxLevel = k - 1;
+            let discreteLevel = Math.round(finalScore);
+            if (finalScore <= minLevel + 0.65) {
+                discreteLevel = minLevel;
+            } else if (finalScore >= maxLevel - 0.65) {
+                discreteLevel = maxLevel;
+            }
+
             const legend = Object.fromEntries(geom.rawLabels.map((c, i) => [String(i), c]));
             answers[qKey] = {
                 type: "score",
                 score: finalScore,
+                level: discreteLevel,
                 argmaxLevel,
                 confidence: Number((0.45 + (1 - scoreMetrics.variance / Math.max(1, k - 1)) * 0.45).toFixed(4)),
                 legend,

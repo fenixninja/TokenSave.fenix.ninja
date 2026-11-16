@@ -225,7 +225,8 @@ export function taskMetrics(rows) {
             return Number(Object.keys(probs).reduce((a, b) => (probs[a] >= probs[b] ? a : b)));
         });
         const mid = (Object.keys(rows[0].answer.legend).length - 1) / 2;
-        const correct = s.map((a, i) => Math.round(a) === g[i]);
+        const predLevel = rows.map(r => r.answer.level !== undefined ? Number(r.answer.level) : Math.round(Number(r.answer.score)));
+        const correct = predLevel.map((a, i) => a === g[i]);
         m.mae = mean(s.map((a, i) => Math.abs(a - g[i])));
         m.acc_round = mean(correct.map(Number));
         m.acc_argmax = mean(argmax.map((a, i) => (a === g[i] ? 1 : 0)));
@@ -402,7 +403,7 @@ async function main() {
 
     let limit = 5;
     let tasks = null;
-    let runName = "tokensafe-remaster-v3/qwen3-embedding-0.6b";
+    let runName = "tokensafe-remaster-v4/qwen3-embedding-0.6b";
     let explainFailures = false;
 
     for (let i = 0; i < args.length; i++) {
@@ -428,7 +429,7 @@ async function main() {
 
     console.log(`Cargando modelo ${MODEL_ID} (q4f16, 4 hilos CPU)...`);
     await getRemasterModel();
-    console.log(`✔ Modelo listo. Evaluando ${items.length} pruebas con motor v3 (calibración de umbrales + mode blending + BoolQ acelerado)...\n`);
+    console.log(`✔ Modelo listo. Evaluando ${items.length} pruebas con motor v4 (umbrales calibrados + edge stretching + leyendas)...`);
 
     const rows = [];
     for (let i = 0; i < items.length; i++) {
@@ -440,8 +441,8 @@ async function main() {
 
         rows.push({
             run: runName,
-            system: "tokensafe_remaster_v2",
-            variant: "qwen3-embedding-0.6b-v2",
+            system: "tokensafe_remaster_v4",
+            variant: "qwen3-embedding-0.6b-v4",
             task: it.task,
             kind: it.kind,
             id: it.id,
@@ -458,8 +459,9 @@ async function main() {
             ok = ans.choice === it.gold;
             predStr = String(ans.choice);
         } else if (it.kind === "score") {
-            ok = Math.round(ans.score) === it.gold;
-            predStr = `${ans.score.toFixed(2)} (nivel=${Math.round(ans.score)}, am=${ans.argmaxLevel ?? 'N/A'})`;
+            const predLvl = ans.level !== undefined ? ans.level : Math.round(ans.score);
+            ok = predLvl === it.gold;
+            predStr = `${ans.score.toFixed(2)} (level=${predLvl}, am=${ans.argmaxLevel ?? 'N/A'})`;
         } else {
             const isDecisionTrue = ans.isTrue !== undefined ? Boolean(ans.isTrue) : (ans.noul >= (ans.threshold || 0.5));
             ok = isDecisionTrue === it.gold;
@@ -484,7 +486,7 @@ async function main() {
 
     const aciertosTot = rows.filter(r =>
         (r.kind === "choice" && r.answer.choice === r.gold) ||
-        (r.kind === "score" && Math.round(r.answer.score) === r.gold) ||
+        (r.kind === "score" && (r.answer.level !== undefined ? r.answer.level : Math.round(r.answer.score)) === r.gold) ||
         (r.kind === "noul" && (r.answer.isTrue !== undefined ? Boolean(r.answer.isTrue) : (r.answer.noul >= (r.answer.threshold || 0.5))) === r.gold)
     ).length;
     const pctTot = ((aciertosTot / rows.length) * 100).toFixed(1);

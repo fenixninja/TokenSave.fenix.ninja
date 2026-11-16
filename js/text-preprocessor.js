@@ -196,7 +196,7 @@ export function buildNoulPrototypes(instText, criteriaObj = null) {
     if (instLow.includes("movie review") || instLow.includes("sentiment") || (instLow.includes("positive") && instLow.includes("negative"))) {
         return {
             domain: "sst2",
-            recommendedThreshold: 0.85,
+            recommendedThreshold: 0.66,
             taskPriorShift: 1.50,
             trueTexts: [
                 "Positive movie review: an enjoyable, charming, funny, intelligent, moving, thrilling, well-acted, solid and worthwhile film.",
@@ -212,7 +212,7 @@ export function buildNoulPrototypes(instText, criteriaObj = null) {
     if (instLow.includes("spam")) {
         return {
             domain: "sms_spam",
-            recommendedThreshold: 0.75,
+            recommendedThreshold: 0.68,
             taskPriorShift: 1.10,
             trueTexts: [
                 "Spam SMS advertisement: urgent prize winner, claim £1000 free cash or holiday, text code to shortcode, call 0800/0906, ringtone or dating scam.",
@@ -255,7 +255,7 @@ export function buildNoulPrototypes(instText, criteriaObj = null) {
     const declarativeCore = inst.replace(/^(is|are|was|were|can|could|do|does|did|has|have|had|will|would|should)\s+/i, "").replace(/\?+$/, "");
     return {
         domain: "boolq",
-        recommendedThreshold: 0.70,
+        recommendedThreshold: 0.56,
         taskPriorShift: 0.85,
         trueTexts: [
             `Yes, the passage affirms or confirms: ${declarativeCore}.`,
