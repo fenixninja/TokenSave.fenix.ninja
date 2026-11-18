@@ -13,12 +13,36 @@ import { pipeline, env } from "https://cdn.jsdelivr.net/npm/@huggingface/transfo
 import { UMAP } from "https://cdn.jsdelivr.net/npm/umap-js@1.4.0/+esm";
 import { cosineSimilarityRaw } from "./primitives.js";
 
-// Serve models locally from the Python/local HTTP server (/models/)
-// This enables instantaneous loading from disk with 0 internet consumption.
+function resolveModelSource() {
+    if (typeof window === "undefined" || !window.location) {
+        return { isLocal: true, reason: "non-browser" };
+    }
+    const params = new URLSearchParams(window.location.search);
+    const override = (params.get("model") || "").toLowerCase();
+    if (override === "remote") return { isLocal: false, reason: "query:?model=remote" };
+    if (override === "local") return { isLocal: true, reason: "query:?model=local" };
+
+    const host = (window.location.hostname || "").toLowerCase();
+    const isLocalHost = host === "localhost" || host === "127.0.0.1" || host === "[::1]" || host === "::1" || host === "";
+    return { isLocal: isLocalHost, reason: isLocalHost ? `host:${host || "file"}` : `host:${host}` };
+}
+
+const modelSource = resolveModelSource();
+export const isLocalModelMode = modelSource.isLocal;
+
 env.useBrowserCache = true;
-env.allowLocalModels = true;
-env.allowRemoteModels = false;
-env.localModelPath = "/models/";
+if (isLocalModelMode) {
+    // Serve models locally from the Python/local HTTP server (/models/)
+    env.allowLocalModels = true;
+    env.allowRemoteModels = false;
+    env.localModelPath = "/models/";
+    console.log(`%c[Fenix Vector] Modo de modelo: LOCAL (/models/) [${modelSource.reason}]`, "color: #10b981; font-weight: bold;");
+} else {
+    // Serve models remotely from Hugging Face Hub with browser cache (GitHub Pages / web)
+    env.allowLocalModels = false;
+    env.allowRemoteModels = true;
+    console.log(`%c[Fenix Vector] Modo de modelo: REMOTO (Hugging Face Hub + Cache) [${modelSource.reason}]`, "color: #06b6d4; font-weight: bold;");
+}
 
 // Configure multithreaded WASM (SharedArrayBuffer) matching physical CPU cores
 const isCrossIsolated = typeof crossOriginIsolated !== "undefined" && crossOriginIsolated;
@@ -153,11 +177,14 @@ export async function getEmbeddingModel(onProgress) {
 
         if (isIsolated) {
             console.log(`%c[Fenix Vector][Fase 2] Cross-Origin Isolation ACTIVO: ${targetThreads} hilos CPU WASM SIMD configurados.`, "color: #10b981;");
-        } else {
+        } else if (isLocalModelMode) {
             console.warn(`[Fenix Vector][Fase 2] Cross-Origin Isolation INACTIVO: Ejecutando en 1 hilo. (Para 4 hilos, ejecuta: python3 server.py 3000)`);
+        } else {
+            console.info(`[Fenix Vector][Fase 2] Modo web sin cabeceras COOP/COEP: Ejecutando WASM en 1 hilo.`);
         }
 
-        console.log("[Fenix Vector][Fase 3] Cargando modelo ONNX cuantizado q4 desde el servidor local...");
+        const sourceLabel = isLocalModelMode ? "el servidor local (/models/)" : "Hugging Face Hub (o cache del navegador)";
+        console.log(`[Fenix Vector][Fase 3] Cargando modelo ONNX cuantizado q4 desde ${sourceLabel}...`);
         try {
             embedPipeline = await pipeline(
                 "feature-extraction",
